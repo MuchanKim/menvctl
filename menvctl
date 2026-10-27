@@ -1,0 +1,1180 @@
+#!/usr/bin/env bash
+# menvctl: installs, updates, and reports updates for the Codex and Claude Code setup in
+# this repository. Stays bash 3.2 compatible because that is what macOS ships.
+
+set -euo pipefail
+
+# Follow symlinks so ~/.local/bin/menvctl finds the repository it points into.
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+  link_target="$(readlink "$script_path")"
+  [[ "$link_target" == /* ]] || link_target="$(dirname -- "$script_path")/$link_target"
+  script_path="$link_target"
+done
+REPO_DIR="$(cd -- "$(dirname -- "$script_path")" && pwd)"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/menvctl"
+STATE_FILE="$STATE_DIR/state.json"
+MANIFEST="$REPO_DIR/packages.json"
+SHARED_SETTINGS="$REPO_DIR/claude/settings.shared.json"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+ZSHRC="$HOME/.zshrc"
+NOTICE_LINE="[ -x \"$REPO_DIR/menvctl\" ] && \"$REPO_DIR/menvctl\" check  # menvctl update notice"
+BIN_LINK="$HOME/.local/bin/menvctl"
+# Only plain vX.Y.Z tags are releases; sort -V would rank v1.2.0-rc.1 above v1.2.0.
+RELEASE_TAG='^v[0-9]+\.[0-9]+\.[0-9]+$'
+OPENAI_DOCS_MCP_URL="https://developers.openai.com/mcp"
+# Marketplaces that stay configured even when no managed plugin uses them:
+# Claude's official one and the ones the Codex app provides.
+KEEP_MARKETPLACES="claude-plugins-official openai-curated-remote openai-bundled openai-primary-runtime personal"
+# Backups live outside agent directories so a backed-up skill is not loaded twice.
+BACKUP_DIR="$HOME/.menvctl-backup/$(date +%Y%m%d-%H%M%S)-$$"
+
+usage() {
+  cat <<'EOF'
+Usage: menvctl [--yes] [--reconfigure]
+       menvctl update [--yes]
+       menvctl check
+       menvctl capture [--yes]
+       menvctl release X.Y.Z [--yes]
+
+(no command)   Set up this Mac from this checkout. The first run asks what to
+               install; later runs reuse those answers.
+--reconfigure  Ask the setup questions again (agents, skills, update notice).
+update         Get the latest published version and apply it. Skills, plugins,
+               and settings it dropped are removed from this Mac.
+check          Print a notice when a newer version is published (run from ~/.zshrc).
+capture        Find skills and plugins installed on this Mac by hand that
+               packages.json does not track, and add the ones you pick.
+release        Check menvctl in a throwaway sandbox, then commit, tag vX.Y.Z,
+               and publish this checkout to GitHub, and apply it here.
+               Writes the "## [X.Y.Z]" CHANGELOG section if it is missing.
+--yes          Answer every question with its default. CLI and gstack installs
+               are skipped because they run remote install scripts; release
+               publishes only with --yes or y.
+EOF
+}
+
+COMMAND=apply
+ASSUME_YES=0
+RECONFIGURE=0
+RELEASE_ARG=""
+for arg in "$@"; do
+  case "$arg" in
+    apply|install) COMMAND=apply ;;
+    update|check|capture|release) COMMAND="$arg" ;;
+    -y|--yes) ASSUME_YES=1 ;;
+    --reconfigure) RECONFIGURE=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) usage >&2; exit 1 ;;
+    *)
+      if [[ "$COMMAND" == release && -z "$RELEASE_ARG" ]]; then
+        RELEASE_ARG="$arg"
+      else
+        usage >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+state_get() {
+  if [[ -f "$STATE_FILE" ]]; then
+    jq -r "$1 // empty" "$STATE_FILE"
+  fi
+}
+
+# lines_minus <a> <b>: newline-separated items of a that are not in b.
+lines_minus() {
+  comm -23 <(printf '%s\n' "$1" | sed '/^$/d' | sort -u) <(printf '%s\n' "$2" | sed '/^$/d' | sort -u)
+}
+
+# is_newer <candidate> <current>: succeeds when candidate sorts after current.
+is_newer() {
+  [[ -n "$1" && "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]]
+}
+
+current_version() {
+  git -C "$REPO_DIR" describe --tags --match 'v[0-9]*' --exclude '*-*' 2>/dev/null || printf 'dev'
+}
+
+# latest_release: newest vX.Y.Z among tag names on stdin.
+latest_release() { { grep -E "$RELEASE_TAG" || true; } | sort -V | tail -1; }
+
+# remote_release: newest vX.Y.Z tag published on origin, ignoring local-only tags.
+remote_release() {
+  GIT_TERMINAL_PROMPT=0 git -C "$REPO_DIR" ls-remote --tags --refs origin 'v*' |
+    sed 's#.*refs/tags/##' | latest_release
+}
+
+move_to_backup() {
+  local backup_path="$BACKUP_DIR${1#"$HOME"}"
+  mkdir -p "$(dirname -- "$backup_path")"
+  mv "$1" "$backup_path"
+  printf 'Backed up: %s -> %s\n' "$1" "$backup_path"
+}
+
+link_item() {
+  local source_path="$1"
+  local target_path="$2"
+
+  if [[ ! -e "$source_path" ]]; then
+    printf 'Missing source: %s\n' "$source_path" >&2
+    return 1
+  fi
+
+  mkdir -p "$(dirname -- "$target_path")"
+
+  if [[ -L "$target_path" ]] && [[ "$(readlink "$target_path")" == "$source_path" ]]; then
+    printf 'Already linked: %s\n' "$target_path"
+    return
+  fi
+
+  if [[ -e "$target_path" || -L "$target_path" ]]; then
+    move_to_backup "$target_path"
+  fi
+
+  ln -s "$source_path" "$target_path"
+  printf 'Linked: %s -> %s\n' "$target_path" "$source_path"
+}
+
+# read_key: one answer. In a terminal a single key counts at once, no Enter;
+# piped input (tests, scripts) is read a line at a time. Enter alone or EOF gives "".
+read_key() {
+  local key=""
+  if [[ -t 0 ]]; then
+    read -r -s -n 1 key || true
+    printf '%s\n' "$key"
+  else
+    read -r key || true
+    printf '%s\n' "$key"
+  fi
+  KEY="$key"
+}
+
+# ask_yn <prompt> <y|n>: succeeds on yes. --yes, Enter, and EOF take the default.
+ask_yn() {
+  local prompt="$1" default="$2"
+  if [[ "$ASSUME_YES" == 1 ]]; then
+    [[ "$default" == y ]]
+    return
+  fi
+  # printf, not read -p: read -p prints nothing when stdin is not a terminal.
+  printf '%s [y/n] ' "$prompt"
+  read_key
+  [[ "${KEY:-$default}" == [yY]* ]]
+}
+
+# --- update notice -----------------------------------------------------------
+
+check_update() {
+  local cache="$STATE_DIR/latest-release" current latest
+  current="$(state_get .version)"
+  [[ -n "$current" ]] || return 0
+  [[ "$(state_get .choices.notice)" == 1 ]] || return 0
+
+  if [[ ! -f "$cache" || -n "$(find "$cache" -mtime +0 2>/dev/null)" ]]; then
+    # Refresh in the background so a shell start never waits on the network.
+    (remote_release >"$cache.tmp" && mv "$cache.tmp" "$cache") </dev/null >/dev/null 2>&1 &
+  fi
+
+  latest="$(cat "$cache" 2>/dev/null || true)"
+  if is_newer "$latest" "$current"; then
+    printf 'menvctl %s is available (installed %s). Run: menvctl update\n' \
+      "$latest" "$current"
+  fi
+  return 0
+}
+
+# --- update ------------------------------------------------------------------
+
+# release_notes <installed version>: CHANGELOG sections newer than the installed one,
+# compared by version so a release without its own section does not print the whole history.
+release_notes() {
+  local installed="$1" line ver show=0 header_re='^## \[([^]]+)\]'
+  [[ -f "$REPO_DIR/CHANGELOG.md" ]] || return 0
+  while IFS= read -r line; do
+    if [[ "$line" =~ $header_re ]]; then
+      # Saved before the next =~ overwrites BASH_REMATCH.
+      ver="${BASH_REMATCH[1]}"
+      show=0
+      if [[ "$ver" != Unreleased ]] && { ! [[ "$installed" =~ $RELEASE_TAG ]] || is_newer "v$ver" "$installed"; }; then
+        show=1
+      fi
+    fi
+    if [[ "$show" == 1 ]]; then printf '%s\n' "$line"; fi
+  done <"$REPO_DIR/CHANGELOG.md"
+}
+
+update() {
+  local current latest
+  if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
+    printf 'Uncommitted changes in %s; commit or stash them first.\n' "$REPO_DIR" >&2
+    return 1
+  fi
+  # --tags: a shallow clone of a release tag has no remote branch, but its tag marks it published.
+  if [[ -n "$(git -C "$REPO_DIR" log --oneline HEAD --not --remotes --tags)" ]]; then
+    printf 'Unpushed commits in %s; push them or run menvctl to apply this checkout.\n' "$REPO_DIR" >&2
+    return 1
+  fi
+
+  latest="$(remote_release)"
+  current="$(state_get .version)"
+  if [[ -z "$latest" ]]; then
+    printf 'No release tags found on origin.\n'
+    return
+  fi
+  # Branches too, so the unpushed-commit check sees the release commit as published.
+  # --force makes a stale local tag of the same name match origin.
+  git -C "$REPO_DIR" fetch --quiet origin
+  git -C "$REPO_DIR" fetch --quiet --force origin "refs/tags/$latest:refs/tags/$latest"
+  if ! is_newer "$latest" "${current:-none}"; then
+    printf 'Already up to date: %s\n' "$current"
+    return
+  fi
+
+  if [[ -n "$current" ]]; then
+    printf 'Updating %s -> %s\n\n' "$current" "$latest"
+  else
+    printf 'Updating to %s\n\n' "$latest"
+  fi
+  # Already on the release commit (the machine that tagged it, still on main):
+  # apply in place instead of leaving the branch.
+  if [[ "$(git -C "$REPO_DIR" rev-parse HEAD)" != "$(git -C "$REPO_DIR" rev-parse "refs/tags/$latest^{commit}")" ]]; then
+    # Linked rules and skills follow the checkout, so a declined plan checks this ref out again.
+    export MENVCTL_ROLLBACK_REF
+    MENVCTL_ROLLBACK_REF="$(git -C "$REPO_DIR" symbolic-ref -q --short HEAD || git -C "$REPO_DIR" rev-parse HEAD)"
+    # refs/tags/ so a branch with the same name is never picked.
+    git -C "$REPO_DIR" -c advice.detachedHead=false checkout --quiet --detach "refs/tags/$latest"
+  fi
+  release_notes "${current:-none}"
+  # The new release's installer decides what to add and remove.
+  if [[ "$ASSUME_YES" == 1 ]]; then
+    exec "$REPO_DIR/menvctl" apply --yes
+  fi
+  exec "$REPO_DIR/menvctl" apply
+}
+
+# --- choices -----------------------------------------------------------------
+
+USE_CODEX=0 USE_CLAUDE=0 DO_RULES=0 DO_SETTINGS=0 DO_NOTICE=0 DO_TOOLS=0
+
+SKILLS=()
+SELECTED=()
+for skill_dir in "$REPO_DIR"/skills/*/; do
+  # With no skills the glob stays literal.
+  [[ -d "$skill_dir" ]] || continue
+  SKILLS+=("$(basename -- "$skill_dir")")
+  SELECTED+=(1)
+done
+
+choose_skills() {
+  local i n input mark
+  while [[ "$ASSUME_YES" != 1 ]]; do
+    printf '\nSkills ([x] = installed on this Mac):\n'
+    for i in "${!SKILLS[@]}"; do
+      mark=" "
+      [[ "${SELECTED[i]}" == 1 ]] && mark="x"
+      printf '  %2d) [%s] %s\n' "$((i + 1))" "$mark" "${SKILLS[i]}"
+    done
+    input=""
+    printf 'Type numbers to switch skills on or off (e.g. "2 5"), "all", "none", or press Enter when done: '
+    read -r input || true
+    [[ -t 0 ]] || printf '%s\n' "$input"
+    case "$input" in
+      "") return ;;
+      all) for i in "${!SKILLS[@]}"; do SELECTED[i]=1; done ;;
+      none) for i in "${!SKILLS[@]}"; do SELECTED[i]=0; done ;;
+      *)
+        for n in $input; do
+          if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= ${#SKILLS[@]} )); then
+            SELECTED[n - 1]=$((1 - SELECTED[n - 1]))
+          else
+            printf 'Ignored: %s\n' "$n"
+          fi
+        done
+        ;;
+    esac
+  done
+}
+
+# skills_with <0|1>: skill names whose selection matches.
+skills_with() {
+  local i
+  for i in "${!SKILLS[@]}"; do
+    if [[ "${SELECTED[i]}" == "$1" ]]; then
+      printf '%s\n' "${SKILLS[i]}"
+    fi
+  done
+}
+
+# Excluded skills are saved instead of selected ones so new skills install by default.
+load_choices() {
+  local excluded i
+  USE_CODEX="$(state_get .choices.codex)"
+  USE_CLAUDE="$(state_get .choices.claude)"
+  DO_RULES="$(state_get .choices.rules)"
+  DO_SETTINGS="$(state_get .choices.settings)"
+  DO_NOTICE="$(state_get .choices.notice)"
+  excluded="$(state_get '.choices.excluded_skills[]?')"
+  for i in "${!SKILLS[@]}"; do
+    if grep -qxF "${SKILLS[i]}" <<<"$excluded"; then
+      SELECTED[i]=0
+    fi
+  done
+}
+
+ask_choices() {
+  if ask_yn "Set up Codex?" y; then USE_CODEX=1; else USE_CODEX=0; fi
+  if ask_yn "Set up Claude Code?" y; then USE_CLAUDE=1; else USE_CLAUDE=0; fi
+  if ask_yn "Link global rules (AGENTS.md / CLAUDE.md)?" y; then DO_RULES=1; else DO_RULES=0; fi
+  if ask_yn "Apply shared settings (merge Claude settings.json, register the Codex MCP server)?" y; then DO_SETTINGS=1; else DO_SETTINGS=0; fi
+  if ask_yn "Show a notice in new shells when an update is released?" y; then DO_NOTICE=1; else DO_NOTICE=0; fi
+  choose_skills
+  if [[ "$ASSUME_YES" == 1 ]]; then
+    printf 'Skipping CLI and gstack installs in --yes mode.\n'
+  elif ask_yn "Install missing CLIs or gstack? Each one asks first." n; then
+    DO_TOOLS=1
+  fi
+}
+
+# --- skills ------------------------------------------------------------------
+
+# agent_skills <agent>: skills to link for an agent: listed for it in packages.json,
+# present under skills/, and not excluded on this machine. One source, one link per agent.
+agent_skills() {
+  local listed name
+  listed="$(jq -r --arg a "$1" '.[$a].skills[]?' "$MANIFEST")"
+  for name in $(skills_with 1); do
+    if grep -qxF "$name" <<<"$listed"; then
+      printf '%s\n' "$name"
+    fi
+  done
+}
+
+# skill_warnings: skills/ entries no agent lists, and listed skills that do not exist.
+skill_warnings() {
+  local present agent name
+  present="$(skills_with 1; skills_with 0)"
+  for name in $(lines_minus "$present" "$(jq -r '[.claude.skills[]?, .codex.skills[]?][]' "$MANIFEST")"); do
+    printf '  ! skills/%s is not listed for any agent in packages.json; not linked\n' "$name"
+  done
+  for agent in claude codex; do
+    for name in $(lines_minus "$(jq -r --arg a "$agent" '.[$a].skills[]?' "$MANIFEST")" "$present"); do
+      printf '  ! packages.json lists %s skill %s, but skills/%s does not exist\n' "$(agent_label "$agent")" "$name" "$name"
+    done
+  done
+}
+
+# skill_changes <skills dir> <wanted names>: "+ name" to link, "- name" to unlink.
+# Only links into this repository are removed.
+skill_changes() {
+  local dir="$1" want="$2" name link
+  for name in $want; do
+    if [[ "$(readlink "$dir/$name" 2>/dev/null || true)" != "$REPO_DIR/skills/$name" ]]; then
+      printf '+ %s\n' "$name"
+    fi
+  done
+  for link in "$dir"/*; do
+    [[ -L "$link" ]] || continue
+    case "$(readlink "$link")" in
+      "$REPO_DIR/skills/"*) ;;
+      *) continue ;;
+    esac
+    name="$(basename -- "$link")"
+    if ! grep -qxF "$name" <<<"$want"; then
+      printf -- '- %s\n' "$name"
+    fi
+  done
+}
+
+apply_skill_changes() {
+  local dir="$1" changes="$2" op name
+  while read -r op name; do
+    case "$op" in
+      +) link_item "$REPO_DIR/skills/$name" "$dir/$name" ;;
+      -) rm "$dir/$name" && printf 'Unlinked: %s\n' "$dir/$name" ;;
+    esac
+  done <<<"$changes"
+}
+
+# --- Claude settings ---------------------------------------------------------
+
+# Three-way merge: keys the previous shared settings had and the new ones dropped
+# are removed unless edited locally; shared keys win; permissions.deny keeps
+# local entries and drops only entries the shared list dropped.
+claude_settings_merged() {
+  local previous
+  previous="$(state_get .claude_settings)"
+  [[ -n "$previous" ]] || previous='{}'
+  jq -s --argjson old "$previous" '
+    def leaves: [paths as $p
+      | select(($p | all(type == "string")) and (getpath($p) | type) != "object") | $p];
+    def prune($p): if ($p | length) > 0 and getpath($p) == {} then delpaths([$p]) | prune($p[:-1]) else . end;
+    # A path whose parent changed type locally is unreadable; that never equals a
+    # real value, so it counts as a local edit (even against an old null).
+    def lookup($p): try getpath($p) catch {"menvctl": "unreadable"};
+    def deny: try (.permissions.deny | if type == "array" then . else [] end) catch [];
+    .[0] as $local | .[1] as $new
+    | ((($old | leaves) - ($new | leaves)) - [["permissions", "deny"]]) as $gone
+    | reduce $gone[] as $p ($local;
+        if lookup($p) == ($old | getpath($p)) then delpaths([$p]) | prune($p[:-1]) else . end)
+    | . * $new
+    | if (($local | deny) != [] or ($new | deny) != [])
+        and ((.permissions | type) == "object" or .permissions == null) then
+        .permissions.deny = ((($local | deny) - (($old | deny) - ($new | deny))) + ($new | deny) | unique)
+      else . end' \
+    <(cat "$CLAUDE_SETTINGS" 2>/dev/null || printf '{}') "$SHARED_SETTINGS"
+}
+
+write_claude_settings() {
+  local merged="$1" backup_path
+  mkdir -p "$(dirname -- "$CLAUDE_SETTINGS")"
+  if [[ -f "$CLAUDE_SETTINGS" ]]; then
+    backup_path="$BACKUP_DIR${CLAUDE_SETTINGS#"$HOME"}"
+    mkdir -p "$(dirname -- "$backup_path")"
+    cp "$CLAUDE_SETTINGS" "$backup_path"
+    printf 'Backed up: %s -> %s\n' "$CLAUDE_SETTINGS" "$backup_path"
+  fi
+  printf '%s\n' "$merged" >"$CLAUDE_SETTINGS"
+  printf 'Merged: %s\n' "$CLAUDE_SETTINGS"
+}
+
+# --- plugins -----------------------------------------------------------------
+# <agent> is claude or codex, which is also the CLI name. The CLIs share
+# "plugin marketplace add/remove" but differ in list output and install verbs.
+
+agent_label() { if [[ "$1" == claude ]]; then printf 'Claude'; else printf 'Codex'; fi; }
+
+installed_plugins() {
+  case "$1" in
+    claude) claude plugin list --json | jq -r '.[].id' ;;
+    codex) codex plugin list --json | jq -r '.installed[]?.pluginId' ;;
+  esac
+}
+
+configured_marketplaces() {
+  case "$1" in
+    claude) claude plugin marketplace list --json | jq -r '.[].name' ;;
+    codex) codex plugin marketplace list --json | jq -r '.marketplaces[]?.name' ;;
+  esac
+}
+
+# plugin_cleanup <agent> <id>: cleanup paths recorded when the plugin was installed.
+plugin_cleanup() {
+  if [[ -f "$STATE_FILE" ]]; then
+    jq -r --arg a "$1" --arg id "$2" '(.plugins[$a]? // [])[]? | select(.id == $id) | .cleanup[]?' "$STATE_FILE"
+  fi
+}
+
+# plugin_changes <agent> <0|1 agent enabled>: "+ id" to install, "- id" to remove.
+# Only plugins menvctl recorded as installed are ever removed.
+plugin_changes() {
+  local agent="$1" want="" id
+  [[ "$2" == 1 ]] && want="$(jq -r --arg a "$agent" '.[$a].plugins[]?.id' "$MANIFEST")"
+  for id in $(lines_minus "$want" "$(installed_plugins "$agent")"); do printf '+ %s\n' "$id"; done
+  for id in $(lines_minus "$(state_get "(.plugins.$agent? // [])[]?.id")" "$want"); do printf -- '- %s\n' "$id"; done
+}
+
+# A failed install (for example before codex login) is reported, not fatal; it is
+# not recorded as installed, so the next run tries again.
+install_plugin() {
+  local agent="$1" id="$2" repo marketplace="${2#*@}"
+  if ! valid_plugin_id "$id"; then
+    printf 'Skipped invalid plugin id: %s\n' "$id" >&2
+    return 0
+  fi
+  repo="$(jq -r --arg a "$agent" --arg id "$id" '.[$a].plugins[]? | select(.id == $id) | .repo // empty' "$MANIFEST")"
+  if [[ -n "$repo" ]] && ! grep -qxF "$marketplace" <<<"$(configured_marketplaces "$agent")"; then
+    "$agent" plugin marketplace add "$repo" || true
+  fi
+  case "$agent" in
+    claude) if [[ "$ASSUME_YES" == 1 ]]; then set -- claude plugin install -y "$id"; else set -- claude plugin install "$id"; fi ;;
+    codex) set -- codex plugin add "$id" ;;
+  esac
+  if ! "$@"; then
+    printf 'Failed to install %s plugin %s; run menvctl again once the error above is fixed.\n' "$(agent_label "$agent")" "$id" >&2
+  fi
+}
+
+# Plugin ids become cache paths for rm -rf, so each part must be a plain name.
+valid_plugin_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+# Cleanup paths come from the state file because the new manifest no longer lists the plugin.
+# They are limited to agent directories so a bad entry cannot move unrelated files.
+remove_plugin() {
+  local agent="$1" id="$2" marketplace="${2#*@}" path
+  if ! valid_plugin_id "$id"; then
+    printf 'Skipped invalid plugin id: %s\n' "$id" >&2
+    return 0
+  fi
+  if grep -qxF "$id" <<<"$(installed_plugins "$agent")"; then
+    case "$agent" in
+      claude) claude plugin uninstall "$id" ;;
+      codex) codex plugin remove "$id" ;;
+    esac
+  fi
+  # claude plugin uninstall keeps the re-downloadable copy, so delete it outright.
+  local cache_dir="$HOME/.claude/plugins/cache/$marketplace/${id%@*}"
+  if [[ "$agent" == claude && -d "$cache_dir" ]]; then
+    rm -rf "$cache_dir"
+    rmdir "$(dirname -- "$cache_dir")" 2>/dev/null || true
+    printf 'Removed plugin cache: %s\n' "$cache_dir"
+  fi
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    case "$path" in
+      *..*) printf 'Skipped cleanup path with "..": %s\n' "$path" >&2; continue ;;
+      "~/.claude/"?* | "~/.codex/"?*) ;;
+      *) printf 'Skipped cleanup path outside ~/.claude and ~/.codex: %s\n' "$path" >&2; continue ;;
+    esac
+    path="$HOME/${path#\~/}"
+    if [[ -e "$path" || -L "$path" ]]; then
+      move_to_backup "$path"
+    fi
+  done <<<"$(plugin_cleanup "$agent" "$id")"
+  if [[ " $KEEP_MARKETPLACES " != *" $marketplace "* ]] &&
+    ! grep -q "@$marketplace\$" <<<"$(installed_plugins "$agent")" &&
+    grep -qxF "$marketplace" <<<"$(configured_marketplaces "$agent")"; then
+    "$agent" plugin marketplace remove "$marketplace"
+  fi
+}
+
+print_plugin_plan() {
+  local agent="$1" changes="$2" op id path
+  while read -r op id; do
+    [[ -n "$op" ]] || continue
+    printf '  %s plugin (%s) %s\n' "$op" "$(agent_label "$agent")" "$id"
+    if [[ "$op" == - ]]; then
+      while read -r path; do
+        [[ -n "$path" ]] && printf '      move to backup: %s\n' "$path"
+      done <<<"$(plugin_cleanup "$agent" "$id")"
+    fi
+  done <<<"$changes"
+  return 0
+}
+
+# for-loops, not read: plugin CLIs may prompt and would consume a here-string on stdin.
+apply_plugin_changes() {
+  local agent="$1" id
+  for id in $(sed -n 's/^+ //p' <<<"$2"); do install_plugin "$agent" "$id"; done
+  for id in $(sed -n 's/^- //p' <<<"$2"); do remove_plugin "$agent" "$id"; done
+}
+
+# recorded_plugins <agent> <0|1 agent enabled>: manifest entries now installed, as JSON.
+# When the CLI is missing or its list fails, the previous record is kept: an empty
+# record would hide installed plugins from later removals.
+recorded_plugins() {
+  local agent="$1" ids
+  if have "$agent" && ids="$(installed_plugins "$agent")"; then
+    if [[ "$2" != 1 ]]; then
+      printf '[]'
+    else
+      jq --arg a "$agent" --argjson ids "$(printf '%s\n' "$ids" | jq -R . | jq -s .)" \
+        '[.[$a].plugins[]? | select(.id as $id | $ids | index($id))]' "$MANIFEST"
+    fi
+  else
+    state_get "(.plugins.$agent? // [])" | grep . || printf '[]'
+  fi
+}
+
+# --- external tools ----------------------------------------------------------
+
+install_tools() {
+  local gstack_dir="$HOME/.claude/skills/gstack"
+
+  if [[ "$USE_CODEX" == 1 ]] && ! have codex; then
+    if ! have npm; then
+      printf 'npm not found; install Node.js first to install the codex CLI.\n' >&2
+    elif ask_yn "Install Codex CLI (npm install -g @openai/codex)?" n; then
+      npm install -g @openai/codex
+    fi
+  fi
+
+  if [[ "$USE_CLAUDE" != 1 ]]; then
+    return
+  fi
+  if ! have claude && ask_yn "Install Claude Code CLI (runs https://claude.ai/install.sh)?" n; then
+    curl -fsSL https://claude.ai/install.sh | bash
+  fi
+  if [[ -d "$gstack_dir" ]]; then
+    printf 'Already installed: gstack (update with /gstack-upgrade)\n'
+  elif ask_yn "Install gstack (clones github.com/garrytan/gstack and runs its setup)?" n; then
+    if ! have bun; then
+      printf 'gstack setup needs bun; install it first (brew install oven-sh/bun/bun).\n' >&2
+      return
+    fi
+    git clone --depth 1 https://github.com/garrytan/gstack.git "$gstack_dir"
+    (cd "$gstack_dir" && ./setup --host claude)
+  fi
+}
+
+# config.toml is rewritten by the Codex app, so only the MCP server is written
+# (through the Codex CLI) and the [desktop] keys are reported, not edited.
+apply_codex_settings() {
+  local local_config="$HOME/.codex/config.toml"
+
+  if have codex; then
+    if codex mcp get openaiDeveloperDocs >/dev/null 2>&1; then
+      printf 'Already registered: openaiDeveloperDocs MCP\n'
+    else
+      codex mcp add openaiDeveloperDocs --url "$OPENAI_DOCS_MCP_URL"
+    fi
+  else
+    printf 'codex not found; skipped openaiDeveloperDocs MCP registration.\n' >&2
+  fi
+
+  if [[ ! -f "$local_config" ]]; then
+    printf 'No %s yet; copy the [desktop] keys from codex/config.shared.toml after the first Codex launch.\n' "$local_config"
+    return
+  fi
+
+  python3 - "$REPO_DIR/codex/config.shared.toml" "$local_config" <<'PY' 2>/dev/null ||
+import sys, tomllib
+
+shared, local = (tomllib.load(open(path, "rb")) for path in sys.argv[1:])
+local_desktop = local.get("desktop", {})
+drift = [key for key, value in shared.get("desktop", {}).items() if local_desktop.get(key) != value]
+if drift:
+    print("Differs from codex/config.shared.toml in [desktop]: " + ", ".join(drift))
+    print("Replace those keys in ~/.codex/config.toml with the shared values.")
+else:
+    print("Already in sync: [desktop] Git instructions")
+PY
+    printf 'Could not compare [desktop] keys (needs python3 3.11+); compare codex/config.shared.toml manually.\n'
+}
+
+# Writes through cat so a symlinked ~/.zshrc stays a symlink; the old file is backed up first.
+remove_notice() {
+  local backup_path="$BACKUP_DIR${ZSHRC#"$HOME"}" kept
+  mkdir -p "$(dirname -- "$backup_path")"
+  cp "$ZSHRC" "$backup_path"
+  kept="$(grep -vxF "$NOTICE_LINE" "$ZSHRC" || true)"
+  printf '%s\n' "$kept" >"$ZSHRC"
+  printf 'Removed update notice from %s (backup: %s)\n' "$ZSHRC" "$backup_path"
+}
+
+# --- capture -----------------------------------------------------------------
+
+# Skill directories each agent reads. ~/.codex/skills holds Codex's own user skills.
+SKILL_DIRS="claude:$HOME/.claude/skills codex:$HOME/.agents/skills codex:$HOME/.codex/skills"
+
+# capture_candidates: tab-separated "kind agent name source" lines for skills and
+# plugins installed here that packages.json does not track. Skipped: links into
+# this repo, skills a tool installed (gstack marks its own; a .git is a tool
+# checkout), turned-off plugins, and plugins the Codex app bundles or installs by default.
+capture_candidates() {
+  local entry agent dir path name target list managed id repo repo_phys
+  # Physical paths on both sides: a resolved link reads /private/var where $HOME may say /var.
+  repo_phys="$(cd -P -- "$REPO_DIR" && pwd)"
+  for entry in $SKILL_DIRS; do
+    agent="${entry%%:*}"
+    dir="${entry#*:}"
+    managed="$(jq -r --arg a "$agent" '.[$a].skills[]?' "$MANIFEST")"
+    for path in "$dir"/*; do
+      name="$(basename -- "$path")"
+      target="$(cd -P -- "$path" 2>/dev/null && pwd || true)"
+      [[ -n "$target" && -f "$target/SKILL.md" ]] || continue
+      case "$target" in "$repo_phys"/*) continue ;; esac
+      [[ -e "$target/.gstack-owned" || -e "$target/.git" ]] && continue
+      grep -qxF "$name" <<<"$managed" && continue
+      printf 'skill\t%s\t%s\t%s\t%s\n' "$agent" "$name" "$target" "$path"
+    done
+  done
+
+  if have claude && list="$(claude plugin list --json)"; then
+    managed="$(jq -r '.claude.plugins[]?.id' "$MANIFEST")"
+    for id in $(jq -r '.[] | select(.enabled != false) | .id' <<<"$list"); do
+      grep -qxF "$id" <<<"$managed" && continue
+      repo="$(claude plugin marketplace list --json |
+        jq -r --arg m "${id#*@}" '.[] | select(.name == $m and .source == "github") | .repo // empty')"
+      printf 'plugin\tclaude\t%s\t%s\n' "$id" "$repo"
+    done
+  fi
+  if have codex && list="$(codex plugin list --json)"; then
+    managed="$(jq -r '.codex.plugins[]?.id' "$MANIFEST")"
+    for id in $(jq -r '.installed[]?
+        | select(.enabled != false and .installPolicy != "INSTALLED_BY_DEFAULT")
+        | (.marketplaceName // "") as $m
+        | select(["openai-bundled", "openai-primary-runtime"] | index($m) | not)
+        | .pluginId' <<<"$list"); do
+      grep -qxF "$id" <<<"$managed" && continue
+      repo="$(jq -r --arg id "$id" '.installed[] | select(.pluginId == $id)
+        | .marketplaceSource | select(.sourceType? == "git") | .source // empty' <<<"$list")"
+      printf 'plugin\tcodex\t%s\t%s\n' "$id" "$repo"
+    done
+  fi
+  return 0
+}
+
+manifest_update() {
+  jq "$@" "$MANIFEST" >"$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+}
+
+# The repo copy becomes the source, so the agent must not also load the old one:
+# the entry found in the agent's directory (a folder or a link) moves to the
+# backup, and so does a link's target when it sits in an agent directory too.
+# A target elsewhere (your own project) is left alone.
+# Fails, changing nothing, when skills/<name> already holds a different skill.
+capture_skill() {
+  local agent="$1" name="$2" source="$3" found="$4" entry dir
+  if [[ -e "$REPO_DIR/skills/$name" ]]; then
+    if ! diff -rq "$source" "$REPO_DIR/skills/$name" >/dev/null 2>&1; then
+      printf 'Skipped %s skill %s: skills/%s already holds a different skill. Rename one and capture again.\n' \
+        "$(agent_label "$agent")" "$name" "$name" >&2
+      return 1
+    fi
+  else
+    mkdir -p "$REPO_DIR/skills"
+    cp -R "$source" "$REPO_DIR/skills/$name"
+    printf 'Copied: %s -> skills/%s\n' "$source" "$name"
+  fi
+  manifest_update --arg a "$agent" --arg n "$name" '.[$a].skills = ((.[$a].skills // []) + [$n] | unique)'
+  if [[ -e "$found" || -L "$found" ]]; then
+    move_to_backup "$found"
+  fi
+  # $source is a physical path; compare against physical skill directories.
+  for entry in $SKILL_DIRS; do
+    dir="$(cd -P -- "${entry#*:}" 2>/dev/null && pwd || true)"
+    if [[ -n "$dir" && "$source" == "$dir/"* && -e "$source" ]]; then
+      move_to_backup "${entry#*:}/${source#"$dir"/}"
+    fi
+  done
+}
+
+capture_plugin() {
+  local agent="$1" id="$2" repo="$3"
+  if ! valid_plugin_id "$id"; then
+    printf 'Skipped invalid plugin id: %s\n' "$id" >&2
+    return 0
+  fi
+  manifest_update --arg a "$agent" --arg id "$id" --arg repo "$repo" \
+    '.[$a].plugins = ((.[$a].plugins // []) + [{id: $id, cleanup: []} + (if $repo == "" then {} else {repo: $repo} end)])'
+  if [[ -z "$repo" && " $KEEP_MARKETPLACES " != *" ${id#*@} "* ]]; then
+    printf 'Added %s without a marketplace repo; add "repo" to it in packages.json if other machines need it.\n' "$id"
+  fi
+}
+
+capture_guide() {
+  cat <<'EOF'
+menvctl capture: these are installed on this Mac but not tracked in packages.json,
+so other Macs do not get them. Choose for each one:
+  y  track it: add it to packages.json (a skill is copied into skills/ and its
+     original moves to the backup folder). Nothing is published until you run
+     menvctl release.
+  n  leave it as it is. capture shows it again next time.
+
+EOF
+}
+
+# where_found <kind> <found> <source>: one line saying why an item is offered.
+where_found() {
+  local found="${2/#$HOME/~}" source="${3/#$HOME/~}"
+  if [[ "$1" == plugin ]]; then
+    printf '  installed with the plugin CLI\n'
+  elif [[ -L "$2" ]]; then
+    printf '  found at %s -> %s\n' "$found" "$source"
+  else
+    printf '  found at %s\n' "$found"
+  fi
+}
+
+capture() {
+  local kind agent name source found added=0 candidates
+  have jq || { printf 'jq is required.\n' >&2; return 1; }
+  candidates="$(capture_candidates)"
+  if [[ -z "$candidates" ]]; then
+    printf 'Nothing new to track.\n'
+    return
+  fi
+
+  capture_guide
+  # Candidates come in on fd 3 so each answer is read from the keyboard.
+  while IFS=$'\t' read -r kind agent name source found <&3; do
+    printf '%s %s %s\n' "$(agent_label "$agent")" "$kind" "$name"
+    where_found "$kind" "$found" "$source"
+    if [[ "$ASSUME_YES" == 1 ]]; then
+      printf 'Track it? [y/n] y\n'
+    elif ! ask_yn "Track it?" n; then
+      printf '\n'
+      continue
+    fi
+    printf '\n'
+    if [[ "$kind" == skill ]]; then
+      capture_skill "$agent" "$name" "$source" "$found" && added=$((added + 1))
+    else
+      capture_plugin "$agent" "$name" "$source"
+      added=$((added + 1))
+    fi
+  done 3<<<"$candidates"
+
+  if [[ "$added" == 0 ]]; then
+    printf 'No items added.\n'
+    return
+  fi
+  printf '\nAdded %s item(s) to packages.json. Publish them with: menvctl release X.Y.Z\n\n' "$added"
+  # Captured skills now live in the repo and need their links.
+  if [[ "$ASSUME_YES" == 1 ]]; then
+    exec "$REPO_DIR/menvctl" apply --yes
+  fi
+  exec "$REPO_DIR/menvctl" apply
+}
+
+# --- release -----------------------------------------------------------------
+
+# Token shapes that must never reach a public repository.
+SECRET_RE='(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+
+# changelog_section <X.Y.Z>: the body of that version's CHANGELOG section.
+changelog_section() {
+  awk -v head="## [$1]" '
+    index($0, head) == 1 { found = 1; next }
+    found && /^## \[/ { exit }
+    found' "$REPO_DIR/CHANGELOG.md" 2>/dev/null | sed '/./,$!d'
+}
+
+# changelog_draft <previous tag or ""> <X.Y.Z>: a CHANGELOG section from what changed
+# since the previous release. Skills and plugins come from comparing packages.json,
+# so they are exact; other edits are listed by file, and a skill whose files changed
+# is listed by name. Prints nothing when nothing changed.
+changelog_draft() {
+  local previous="$1" version="$2" old='{}' items changed path skill kind
+  if [[ -n "$previous" ]]; then
+    old="$(git -C "$REPO_DIR" show "refs/tags/$previous:packages.json" 2>/dev/null || printf '{}')"
+  fi
+  items="$(jq -rn --argjson old "$old" --slurpfile new "$MANIFEST" '
+    $new[0] as $new | {"claude": "Claude", "codex": "Codex"} as $label
+    | ["claude", "codex"][] as $a
+    | (([$new[$a].skills[]?] - [$old[$a].skills[]?])[] | "Added\t\($label[$a]) skill `\(.)`"),
+      (([$old[$a].skills[]?] - [$new[$a].skills[]?])[] | "Removed\t\($label[$a]) skill `\(.)`"),
+      (([$new[$a].plugins[]?.id] - [$old[$a].plugins[]?.id])[] | "Added\t\($label[$a]) plugin `\(.)`"),
+      (([$old[$a].plugins[]?.id] - [$new[$a].plugins[]?.id])[] | "Removed\t\($label[$a]) plugin `\(.)`")')"
+
+  # Other changed files; the first release has no baseline, so it lists only packages.json items.
+  if [[ -n "$previous" ]]; then
+    changed="$({ git -C "$REPO_DIR" diff --name-only "refs/tags/$previous" --
+      git -C "$REPO_DIR" ls-files --others --exclude-standard; } | sort -u)"
+    while IFS= read -r path; do
+      case "$path" in
+        "" | CHANGELOG.md | packages.json) continue ;;
+        skills/*)
+          skill="${path#skills/}"
+          skill="${skill%%/*}"
+          # Skills added or removed in packages.json are already listed above.
+          grep -qF "skill \`$skill\`" <<<"$items" ||
+            items="$items"$'\n'"Changed"$'\t'"Skill \`$skill\` updated"
+          ;;
+        *) items="$items"$'\n'"Changed"$'\t'"\`$path\`" ;;
+      esac
+    done <<<"$changed"
+  fi
+  items="$(sed '/^$/d' <<<"$items" | awk '!seen[$0]++')"
+  [[ -n "$items" ]] || return 0
+
+  printf '## [%s] - %s\n' "$version" "$(date +%F)"
+  for kind in Added Removed Changed; do
+    if grep -q "^$kind"$'\t' <<<"$items"; then
+      printf '\n### %s\n\n' "$kind"
+      grep "^$kind"$'\t' <<<"$items" | cut -f2- | sed 's/^/- /'
+    fi
+  done
+}
+
+# changelog_insert <section>: puts the section under "## [Unreleased]", or above
+# the newest release when there is no Unreleased heading.
+changelog_insert() {
+  local file="$REPO_DIR/CHANGELOG.md"
+  [[ -f "$file" ]] || printf '# Changelog\n' >"$file"
+  SECTION="$1" awk '
+    !done && /^## \[Unreleased\]/ { print; print ""; print ENVIRON["SECTION"]; done = 1; next }
+    !done && /^## \[/ { print ENVIRON["SECTION"]; print ""; print; done = 1; next }
+    { print }
+    END { if (!done) { print ""; print ENVIRON["SECTION"] } }' "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+}
+
+# release_files: what the release commit will contain, in words instead of git's status codes.
+release_files() {
+  local line label
+  git -C "$REPO_DIR" status --porcelain | while IFS= read -r line; do
+    case "${line:0:2}" in
+      '??' | 'A '* | 'AM') label=new ;;
+      ' D' | 'D '*) label=deleted ;;
+      'R'*) label=renamed ;;
+      *) label=changed ;;
+    esac
+    printf '  %-8s %s\n' "$label" "${line:3}"
+  done
+}
+
+# stage <n> <label>: release progress, since the sandbox check alone takes a minute or two.
+stage() { printf "[%s/6] %s\n" "$1" "$2"; }
+
+# publish_leaks: files to be committed, and commits the push would add, whose
+# content (binary files included) matches SECRET_RE. A token committed and later
+# deleted is still caught. "Published" means reachable from what the push URL
+# already holds, so history known only from a private remote or a different fetch
+# URL is scanned too. A commit that cannot be read is reported, stopping the release.
+publish_leaks() {
+  local push_url="$1"
+  (
+    cd "$REPO_DIR"
+    # --: a file named like an option must not turn into a grep flag and end the scan.
+    git ls-files -co --exclude-standard -z | xargs -0 grep -lE "$SECRET_RE" -- 2>/dev/null || true
+    if git rev-parse -q --verify HEAD >/dev/null; then
+      local published=() sha
+      for sha in $(GIT_TERMINAL_PROMPT=0 git ls-remote "$push_url" 2>/dev/null | cut -f1 | sort -u); do
+        # Only commits we have locally can bound the scan; unknown ones publish nothing of ours.
+        if git cat-file -e "$sha^{commit}" 2>/dev/null; then published+=("$sha"); fi
+      done
+      git rev-list HEAD --not ${published[@]+"${published[@]}"} | while read -r commit; do
+        # Read the whole diff first: grep -q exiting early would SIGPIPE git show and,
+        # under pipefail, turn a found token into a miss.
+        # Raw content: textconv or an external diff could rewrite what the scan sees.
+        if ! diff="$(git show --text --no-textconv --no-ext-diff --format= -p "$commit")"; then
+          printf 'commit %s (could not be read)\n' "$commit"
+        elif grep -E "$SECRET_RE" >/dev/null <<<"$diff"; then
+          printf 'commit %s\n' "$(git log -1 --format='%h %s' "$commit")"
+        fi
+      done
+    fi
+  )
+}
+
+release() {
+  local version="v${RELEASE_ARG#v}" latest branch notes leaks push_url
+  local test_cmd="${MENVCTL_RELEASE_TEST:-$REPO_DIR/tests/install-test.sh}"
+
+  stage 1 "Checking the version and release notes"
+  [[ "$version" =~ $RELEASE_TAG ]] || { printf 'Usage: menvctl release X.Y.Z\n' >&2; return 1; }
+  branch="$(git -C "$REPO_DIR" symbolic-ref -q --short HEAD)" ||
+    { printf 'Check out the branch to release from (main) first.\n' >&2; return 1; }
+  # One destination for everything: the version check, the secret-scan baseline,
+  # and the push itself all use this URL, never origin's fetch URL.
+  if [[ "$(git -C "$REPO_DIR" remote get-url --push --all origin | wc -l | tr -d ' ')" != 1 ]]; then
+    printf 'origin has several push URLs; release needs exactly one public destination.\n' >&2
+    return 1
+  fi
+  push_url="$(git -C "$REPO_DIR" remote get-url --push origin)"
+  latest="$(GIT_TERMINAL_PROMPT=0 git -C "$REPO_DIR" ls-remote --tags --refs "$push_url" 'v*' |
+    sed 's#.*refs/tags/##' | latest_release)"
+  if [[ -n "$latest" ]] && ! is_newer "$version" "$latest"; then
+    printf '%s is not newer than the published %s.\n' "$version" "$latest" >&2
+    return 1
+  fi
+  if git -C "$REPO_DIR" rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+    printf 'Tag %s already exists locally.\n' "$version" >&2
+    return 1
+  fi
+  notes="$(changelog_section "${version#v}")"
+  if [[ -z "$notes" ]]; then
+    # The previous release's tree is the baseline; fetch its tag if this clone lacks it.
+    if [[ -n "$latest" ]] && ! git -C "$REPO_DIR" rev-parse -q --verify "refs/tags/$latest" >/dev/null; then
+      git -C "$REPO_DIR" fetch --quiet "$push_url" "refs/tags/$latest:refs/tags/$latest"
+    fi
+    notes="$(changelog_draft "$latest" "${version#v}")"
+    if [[ -z "$notes" ]]; then
+      printf 'Nothing changed since %s, so there is nothing to release.\n' "${latest:-the start}" >&2
+      return 1
+    fi
+    changelog_insert "$notes"
+    printf 'No "## [%s]" section in CHANGELOG.md, so one was written from the changes since %s.\n' \
+      "${version#v}" "${latest:-the start}"
+    notes="$(changelog_section "${version#v}")"
+  fi
+  stage 2 "Checking menvctl in a throwaway sandbox (simulated installs and releases, about 1-2 minutes)"
+  "$test_cmd" || { printf 'Sandbox check failed; nothing was committed or pushed.\n' >&2; return 1; }
+  stage 3 "Scanning for secrets"
+  # After the tests, so files they leave behind are checked too. Covers the files
+  # that git add -A will commit and every local commit the push will publish.
+  leaks="$(publish_leaks "$push_url")"
+  if [[ -n "$leaks" ]]; then
+    printf 'Possible secrets in what would be published; nothing was committed:\n%s\n' "$leaks" >&2
+    return 1
+  fi
+
+  printf '\nFiles in %s (from branch %s):\n' "$version" "$branch"
+  release_files
+  printf '\nRelease notes (from CHANGELOG.md):\n%s\n\n' "$notes"
+  # Publishing cannot be undone: only an explicit --yes or y pushes; silence or EOF does not.
+  if [[ "$ASSUME_YES" != 1 ]] && ! ask_yn "Publish $version to $push_url? (commit, tag, push)" n; then
+    printf 'Cancelled. Nothing was published; the notes stay in CHANGELOG.md for you to edit.\n'
+    return
+  fi
+
+  stage 4 "Committing and tagging $version"
+  git -C "$REPO_DIR" add -A
+  if ! git -C "$REPO_DIR" diff --cached --quiet; then
+    printf 'Release %s\n\nWhat\n%s\n\nWhy\n- Publish these changes to machines that run menvctl update\n' "$version" "$notes" |
+      git -C "$REPO_DIR" commit -q -F -
+  fi
+  git -C "$REPO_DIR" tag -a "$version" -m "$version"
+  stage 5 "Pushing $branch and $version to $push_url"
+  # Exactly this branch and this tag. --no-follow-tags overrides push.followTags,
+  # which would also publish any other annotated tag in the branch's history.
+  # --atomic: both refs land or neither, so a rejected branch never leaves the tag public.
+  if ! git -C "$REPO_DIR" push -q --atomic --no-follow-tags "$push_url" "refs/heads/$branch" "refs/tags/$version"; then
+    git -C "$REPO_DIR" tag -d "$version" >/dev/null
+    printf 'Push failed; the commit is kept and the tag removed. Fix the push and run menvctl release %s again.\n' "${version#v}" >&2
+    return 1
+  fi
+  printf 'Published %s.\n\n' "$version"
+  # Pushing to a URL skips origin's tracking refs; refresh them so a later plain git push works.
+  if git -C "$REPO_DIR" fetch --quiet origin 2>/dev/null; then
+    git -C "$REPO_DIR" branch --quiet --set-upstream-to="origin/$branch" "$branch" 2>/dev/null || true
+  fi
+  stage 6 "Applying $version on this Mac"
+  # This checkout is the release, so applying here records it without leaving the branch.
+  if [[ -f "$STATE_FILE" ]]; then
+    exec "$REPO_DIR/menvctl" apply --yes
+  fi
+  exec "$REPO_DIR/menvctl" apply
+}
+
+# --- apply -------------------------------------------------------------------
+
+apply() {
+  local version codex_changes="" claude_changes="" settings_merged=""
+  local claude_plugins="" codex_plugins="" codex_login_needed=0 agent use line plugins_json settings_json
+
+  have jq || { printf 'jq is required.\n' >&2; return 1; }
+  version="$(current_version)"
+  printf 'menvctl %s: %s\n\n' "$version" "$REPO_DIR"
+
+  # A state without choices (left by an older or interrupted run) counts as none.
+  if [[ -n "$(state_get .choices.codex)" && "$RECONFIGURE" != 1 ]]; then
+    load_choices
+    printf 'Using saved choices (menvctl --reconfigure to change them).\n'
+  else
+    [[ -n "$(state_get .choices.codex)" ]] && load_choices
+    ask_choices
+  fi
+  # Before planning, so a CLI installed here gets its plugins in this run. Each tool asks first.
+  [[ "$DO_TOOLS" == 1 ]] && install_tools
+
+  codex_changes="$(skill_changes "$HOME/.agents/skills" "$([[ "$USE_CODEX" == 1 ]] && agent_skills codex)")"
+  claude_changes="$(skill_changes "$HOME/.claude/skills" "$([[ "$USE_CLAUDE" == 1 ]] && agent_skills claude)")"
+
+  if [[ "$USE_CLAUDE" == 1 && "$DO_SETTINGS" == 1 ]]; then
+    settings_merged="$(claude_settings_merged)"
+    if [[ "$settings_merged" == "$(jq . "$CLAUDE_SETTINGS" 2>/dev/null || true)" ]]; then
+      settings_merged=""
+    fi
+  fi
+
+  for agent in claude codex; do
+    use="$USE_CLAUDE"
+    [[ "$agent" == codex ]] && use="$USE_CODEX"
+    if have "$agent" && ! installed_plugins "$agent" >/dev/null; then
+      printf 'Could not list %s plugins; plugin changes are skipped this run.\n' "$(agent_label "$agent")" >&2
+    elif have "$agent"; then
+      line="$(plugin_changes "$agent" "$use")"
+      # Codex's remote catalog needs a login; skip installs once instead of failing each one.
+      if [[ "$agent" == codex ]] && grep -q '^+ ' <<<"$line" && ! codex login status >/dev/null 2>&1; then
+        codex_login_needed=1
+        line="$(grep -v '^+ ' <<<"$line" || true)"
+      fi
+      if [[ "$agent" == claude ]]; then claude_plugins="$line"; else codex_plugins="$line"; fi
+    elif [[ "$use" == 1 ]]; then
+      printf '%s not found; %s plugin changes are skipped until it is installed.\n' "$agent" "$(agent_label "$agent")"
+    fi
+  done
+
+  printf '\nPlan for %s:\n' "$version"
+  if [[ "$(readlink "$BIN_LINK" 2>/dev/null || true)" != "$REPO_DIR/menvctl" ]]; then
+    printf '  link   ~/.local/bin/menvctl\n'
+  fi
+  [[ "$USE_CODEX" == 1 && "$DO_RULES" == 1 ]] && printf '  link   ~/.codex/AGENTS.md\n'
+  [[ "$USE_CLAUDE" == 1 && "$DO_RULES" == 1 ]] && printf '  link   ~/.claude/CLAUDE.md\n'
+  while read -r line; do [[ -n "$line" ]] && printf '  %s skill (Codex) %s\n' "${line%% *}" "${line#* }"; done <<<"$codex_changes"
+  while read -r line; do [[ -n "$line" ]] && printf '  %s skill (Claude) %s\n' "${line%% *}" "${line#* }"; done <<<"$claude_changes"
+  print_plugin_plan claude "$claude_plugins"
+  print_plugin_plan codex "$codex_plugins"
+  if [[ "$codex_login_needed" == 1 ]]; then
+    printf '  ! Codex is not logged in: run codex login, then menvctl again to install its plugins\n'
+  fi
+  skill_warnings
+  [[ -n "$settings_merged" ]] && printf '  ~ merge ~/.claude/settings.json\n'
+  [[ "$USE_CODEX" == 1 && "$DO_SETTINGS" == 1 ]] && printf '  check  Codex MCP and [desktop] settings\n'
+  if [[ "$DO_NOTICE" == 1 ]] && ! grep -qxF "$NOTICE_LINE" "$ZSHRC" 2>/dev/null; then
+    printf '  + update notice in ~/.zshrc\n'
+  elif [[ "$DO_NOTICE" != 1 ]] && grep -qxF "$NOTICE_LINE" "$ZSHRC" 2>/dev/null; then
+    printf '  - update notice in ~/.zshrc\n'
+  fi
+  # CLAUDE.md routes planning to gstack skills and review to its /codex skill.
+  if [[ "$USE_CLAUDE" == 1 && ! -d "$HOME/.claude/skills/gstack" ]]; then
+    printf '  ! gstack is not installed: planning skills and /codex review are unavailable\n'
+    printf '    (run menvctl --reconfigure and choose to install tools)\n'
+  fi
+
+  if ! ask_yn "Apply this plan?" y; then
+    if [[ -n "${MENVCTL_ROLLBACK_REF:-}" ]]; then
+      git -C "$REPO_DIR" -c advice.detachedHead=false checkout --quiet "$MENVCTL_ROLLBACK_REF"
+      printf 'Restored the previous checkout.\n'
+    fi
+    printf 'Cancelled.\n'
+    return
+  fi
+
+  link_item "$REPO_DIR/menvctl" "$BIN_LINK"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) printf 'Add ~/.local/bin to PATH to run menvctl from anywhere.\n' ;;
+  esac
+
+  if [[ "$USE_CODEX" == 1 ]]; then
+    printf '\n== Codex ==\n'
+    [[ "$DO_RULES" == 1 ]] && link_item "$REPO_DIR/codex/AGENTS.md" "$HOME/.codex/AGENTS.md"
+    [[ "$DO_SETTINGS" == 1 ]] && apply_codex_settings
+  fi
+  apply_skill_changes "$HOME/.agents/skills" "$codex_changes"
+
+  if [[ "$USE_CLAUDE" == 1 ]]; then
+    printf '\n== Claude Code ==\n'
+    [[ "$DO_RULES" == 1 ]] && link_item "$REPO_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+    [[ -n "$settings_merged" ]] && write_claude_settings "$settings_merged"
+  fi
+  apply_skill_changes "$HOME/.claude/skills" "$claude_changes"
+
+  apply_plugin_changes claude "$claude_plugins"
+  apply_plugin_changes codex "$codex_plugins"
+
+  if [[ "$DO_NOTICE" == 1 ]] && ! grep -qxF "$NOTICE_LINE" "$ZSHRC" 2>/dev/null; then
+    printf '\n%s\n' "$NOTICE_LINE" >>"$ZSHRC"
+    printf 'Added update notice to %s\n' "$ZSHRC"
+  elif [[ "$DO_NOTICE" != 1 ]] && grep -qxF "$NOTICE_LINE" "$ZSHRC" 2>/dev/null; then
+    remove_notice
+  fi
+
+  # Record what is now installed so the next update knows what to remove.
+  plugins_json="$(jq -n --argjson claude "$(recorded_plugins claude "$USE_CLAUDE")" \
+    --argjson codex "$(recorded_plugins codex "$USE_CODEX")" '{claude: $claude, codex: $codex}')"
+  settings_json="$(state_get .claude_settings)"
+  [[ "$USE_CLAUDE" == 1 && "$DO_SETTINGS" == 1 ]] && settings_json="$(cat "$SHARED_SETTINGS")"
+  [[ -n "$settings_json" ]] || settings_json='{}'
+
+  mkdir -p "$STATE_DIR"
+  jq -n --arg version "$version" \
+    --argjson codex "$USE_CODEX" --argjson claude "$USE_CLAUDE" --argjson rules "$DO_RULES" \
+    --argjson settings "$DO_SETTINGS" --argjson notice "$DO_NOTICE" \
+    --arg excluded "$(skills_with 0)" \
+    --argjson plugins "$plugins_json" --argjson claude_settings "$settings_json" \
+    '{version: $version,
+      choices: {codex: $codex, claude: $claude, rules: $rules, settings: $settings, notice: $notice,
+                excluded_skills: ($excluded | split("\n") | map(select(. != "")))},
+      plugins: $plugins, claude_settings: $claude_settings}' >"$STATE_FILE.tmp"
+  # Replaced only once complete, so a failure above never leaves an empty state.
+  mv "$STATE_FILE.tmp" "$STATE_FILE"
+
+  printf '\nInstalled %s.\n' "$version"
+}
+
+case "$COMMAND" in
+  apply) apply ;;
+  update) update ;;
+  check) check_update ;;
+  capture) capture ;;
+  release) release ;;
+esac

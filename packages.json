@@ -1,0 +1,45 @@
+{
+  "claude": {
+    "skills": [
+      "liquid-glass",
+      "swift-concurrency-pro",
+      "swift-conventions",
+      "swift-testing-pro",
+      "swiftui-pro"
+    ],
+    "plugins": [
+      {
+        "id": "ponytail@ponytail",
+        "repo": "DietrichGebert/ponytail",
+        "cleanup": [
+          "~/.claude/ponytail-modes",
+          "~/.claude/ponytail-statusline.sh",
+          "~/.claude/.ponytail-active",
+          "~/.claude/.ponytail-statusline-nudged"
+        ]
+      },
+      {
+        "id": "swift-lsp@claude-plugins-official",
+        "repo": "anthropics/claude-plugins-official",
+        "cleanup": []
+      }
+    ]
+  },
+  "codex": {
+    "skills": [
+      "liquid-glass",
+      "swift-concurrency-pro",
+      "swift-conventions",
+      "swift-testing-pro",
+      "swiftui-pro"
+    ],
+    "plugins": [
+      { "id": "github@openai-curated-remote", "cleanup": [] },
+      { "id": "gmail@openai-curated-remote", "cleanup": [] },
+      { "id": "google-calendar@openai-curated-remote", "cleanup": [] },
+      { "id": "figma@openai-curated-remote", "cleanup": [] },
+      { "id": "product-design@openai-curated-remote", "cleanup": [] },
+      { "id": "build-ios-apps@openai-curated-remote", "cleanup": [] }
+    ]
+  }
+}

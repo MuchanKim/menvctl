@@ -1,0 +1,45 @@
+# Merge only these tables and keys into ~/.codex/config.toml.
+# Model selection, credentials, and machine-specific settings stay local.
+
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"
+
+[desktop]
+git-commit-instructions = """
+Follow the applicable global and project AGENTS.md Git rules, including commit approval and the What/Why body requirements. More specific project instructions take precedence.
+
+Before committing:
+- Check the current branch name against the repository's branch naming convention.
+- If it does not follow the convention, warn the user and ask whether to rename it before committing.
+- Do not rename branches without explicit user approval.
+- Show the proposed commit message.
+- Summarize changed files.
+- Confirm verification performed.
+- Confirm no obvious secrets are staged.
+- Wait for explicit user approval before committing.
+
+Commit rules:
+- Keep commits focused.
+- Do not mix unrelated changes.
+- Commit messages should describe the user-visible or developer-visible change, not the tool used.
+- Do not mention Codex, AI, assistant, or generated-by attribution in commit messages.
+- Follow the repository's existing commit style when one exists."""
+
+git-pr-instructions = """
+Branch naming:
+- Follow the applicable global and project AGENTS.md branch naming rules. More specific project instructions take precedence.
+- Do not use AI/tool-specific prefixes such as codex/, claude/, or ai/.
+- Do not rename branches without explicit user approval.
+
+PR rules:
+- Follow the applicable AGENTS.md approval, assignee, and existing-label requirements.
+- Create draft PRs by default.
+- Use the repository's existing PR title and description style when one exists.
+- Do not mention Codex, AI, assistant, or generated-by attribution in PR titles or descriptions.
+- Keep the PR focused on the requested change.
+- Do not include unrelated refactors, formatting changes, or cleanup.
+- In the PR description, include:
+  - Summary of changes.
+  - Verification performed.
+  - Risks or follow-up notes, if any.
+- If verification could not be run, state why and describe the remaining risk."""
