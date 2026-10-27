@@ -35,7 +35,7 @@ Usage: menvctl [--yes] [--reconfigure]
        menvctl update [--yes]
        menvctl check
        menvctl capture [--yes]
-       menvctl release X.Y.Z [--yes]
+       menvctl release [X.Y.Z] [--yes]
 
 (no command)   Set up this Mac from this checkout. The first run asks what to
                install; later runs reuse those answers.
@@ -45,9 +45,10 @@ update         Get the latest published version and apply it. Skills, plugins,
 check          Print a notice when a newer version is published (run from ~/.zshrc).
 capture        Find skills and plugins installed on this Mac by hand that
                packages.json does not track, and add the ones you pick.
-release        Check menvctl in a throwaway sandbox, then commit, tag vX.Y.Z,
+release        Check menvctl in a throwaway sandbox, then commit, tag the version,
                and publish this checkout to GitHub, and apply it here.
                Writes the "## [X.Y.Z]" CHANGELOG section if it is missing.
+               Without X.Y.Z, releases the next minor version (v1.4.2 -> v1.5.0).
 --yes          Answer every question with its default. CLI and gstack installs
                are skipped because they run remote install scripts; release
                publishes only with --yes or y.
@@ -139,31 +140,53 @@ link_item() {
   printf 'Linked: %s -> %s\n' "$target_path" "$source_path"
 }
 
-# read_key: one answer. In a terminal a single key counts at once, no Enter;
-# piped input (tests, scripts) is read a line at a time. Enter alone or EOF gives "".
+# read_key: one key from the terminal, without Enter, as a whole character: the
+# rest of a multi-byte one (Korean) or of an escape sequence (arrow keys) is read too,
+# so it never shows up as extra key presses.
 read_key() {
-  local key=""
-  if [[ -t 0 ]]; then
-    read -r -s -n 1 key || true
-    printf '%s\n' "$key"
-  else
-    read -r key || true
-    printf '%s\n' "$key"
+  local key="" rest="" lead
+  LC_ALL=C read -r -s -n 1 key || true
+  if [[ -n "$key" ]]; then
+    lead="$(LC_ALL=C od -An -tu1 <<<"$key" | awk '{ print $1 }')"
+    if (( lead >= 240 )); then LC_ALL=C read -r -s -n 3 rest || true
+    elif (( lead >= 224 )); then LC_ALL=C read -r -s -n 2 rest || true
+    elif (( lead >= 192 )); then LC_ALL=C read -r -s -n 1 rest || true
+    elif (( lead == 27 )); then LC_ALL=C read -r -s -n 2 rest || true
+    fi
   fi
-  KEY="$key"
+  KEY="$key$rest"
 }
 
-# ask_yn <prompt> <y|n>: succeeds on yes. --yes, Enter, and EOF take the default.
+# ask_yn <prompt> <y|n>: succeeds on yes. In a terminal only y or n answers, so a
+# typo never cancels or confirms anything; ㅛ and ㅜ, the same keys on a Korean
+# keyboard layout, count as y and n. Piped input is read a line at a time, and
+# --yes, EOF, or another answer there take the default.
 ask_yn() {
-  local prompt="$1" default="$2"
+  local prompt="$1" default="$2" answer
   if [[ "$ASSUME_YES" == 1 ]]; then
     [[ "$default" == y ]]
     return
   fi
   # printf, not read -p: read -p prints nothing when stdin is not a terminal.
   printf '%s [y/n] ' "$prompt"
-  read_key
-  [[ "${KEY:-$default}" == [yY]* ]]
+  if [[ -t 0 ]]; then
+    while true; do
+      read_key
+      case "$KEY" in
+        y | Y | ㅛ) answer=y; break ;;
+        n | N | ㅜ) answer=n; break ;;
+      esac
+    done
+  else
+    read -r answer || true
+    case "$answer" in
+      [yY]*) answer=y ;;
+      [nN]*) answer=n ;;
+      *) answer="$default" ;;
+    esac
+  fi
+  printf '%s\n' "$answer"
+  [[ "$answer" == y ]]
 }
 
 # --- update notice -----------------------------------------------------------
@@ -895,6 +918,33 @@ changelog_insert() {
     END { if (!done) { print ""; print ENVIRON["SECTION"] } }' "$file" >"$file.tmp" && mv "$file.tmp" "$file"
 }
 
+# github_release <push URL> <tag> <notes>: the GitHub Releases page entry for the tag,
+# so the notes show on the repo page. Optional: the tag is already published, so a
+# missing gh or a failure only prints how to do it by hand.
+github_release() {
+  local url="$1" tag="$2" notes="$3" slug
+  case "$url" in
+    https://github.com/* | git@github.com:* | ssh://git@github.com/*)
+      slug="${url#https://github.com/}"
+      slug="${slug#git@github.com:}"
+      slug="${slug#ssh://git@github.com/}"
+      slug="${slug%.git}"
+      ;;
+    *) return 0 ;;
+  esac
+  if ! have gh || ! gh auth status >/dev/null 2>&1; then
+    printf 'gh is not installed or not logged in, so no GitHub release page was made.\n'
+    printf 'Make one with: gh release create %s --repo %s --notes-file <notes>\n' "$tag" "$slug"
+    return 0
+  fi
+  if printf '%s\n' "$notes" | gh release create "$tag" --repo "$slug" --title "$tag" --notes-file - --verify-tag >/dev/null; then
+    printf 'Created the GitHub release page: https://github.com/%s/releases/tag/%s\n' "$slug" "$tag"
+  else
+    printf 'Could not create the GitHub release page; run: gh release create %s --repo %s --notes-file <notes>\n' \
+      "$tag" "$slug" >&2
+  fi
+}
+
 # release_files: what the release commit will contain, in words instead of git's status codes.
 release_files() {
   local line label
@@ -944,11 +994,14 @@ publish_leaks() {
 }
 
 release() {
-  local version="v${RELEASE_ARG#v}" latest branch notes leaks push_url
+  local version="" latest branch notes leaks push_url major minor
   local test_cmd="${MENVCTL_RELEASE_TEST:-$REPO_DIR/tests/install-test.sh}"
 
   stage 1 "Checking the version and release notes"
-  [[ "$version" =~ $RELEASE_TAG ]] || { printf 'Usage: menvctl release X.Y.Z\n' >&2; return 1; }
+  if [[ -n "$RELEASE_ARG" ]]; then
+    version="v${RELEASE_ARG#v}"
+    [[ "$version" =~ $RELEASE_TAG ]] || { printf 'Usage: menvctl release [X.Y.Z]\n' >&2; return 1; }
+  fi
   branch="$(git -C "$REPO_DIR" symbolic-ref -q --short HEAD)" ||
     { printf 'Check out the branch to release from (main) first.\n' >&2; return 1; }
   # One destination for everything: the version check, the secret-scan baseline,
@@ -960,6 +1013,17 @@ release() {
   push_url="$(git -C "$REPO_DIR" remote get-url --push origin)"
   latest="$(GIT_TERMINAL_PROMPT=0 git -C "$REPO_DIR" ls-remote --tags --refs "$push_url" 'v*' |
     sed 's#.*refs/tags/##' | latest_release)"
+  # No version given: the next minor version after the published one (v1.4.2 -> v1.5.0).
+  if [[ -z "$version" ]]; then
+    if [[ -n "$latest" ]]; then
+      IFS=. read -r major minor _ <<<"${latest#v}"
+      version="v$major.$((minor + 1)).0"
+      printf 'No version given, so this is %s: the next minor version after %s.\n' "$version" "$latest"
+    else
+      version="v1.0.0"
+      printf 'No version given and nothing published yet, so this is %s.\n' "$version"
+    fi
+  fi
   if [[ -n "$latest" ]] && ! is_newer "$version" "$latest"; then
     printf '%s is not newer than the published %s.\n' "$version" "$latest" >&2
     return 1
@@ -1011,7 +1075,7 @@ release() {
       git -C "$REPO_DIR" commit -q -F -
   fi
   git -C "$REPO_DIR" tag -a "$version" -m "$version"
-  stage 5 "Pushing $branch and $version to $push_url"
+  stage 5 "Pushing $branch and $version to $push_url, and creating the GitHub release page"
   # Exactly this branch and this tag. --no-follow-tags overrides push.followTags,
   # which would also publish any other annotated tag in the branch's history.
   # --atomic: both refs land or neither, so a rejected branch never leaves the tag public.
@@ -1020,7 +1084,10 @@ release() {
     printf 'Push failed; the commit is kept and the tag removed. Fix the push and run menvctl release %s again.\n' "${version#v}" >&2
     return 1
   fi
-  printf 'Published %s.\n\n' "$version"
+  printf 'Published %s.\n' "$version"
+  # The configured URL, before any insteadOf rewrite, names the GitHub repository.
+  github_release "$(git -C "$REPO_DIR" config --get remote.origin.pushurl || git -C "$REPO_DIR" config --get remote.origin.url)" \
+    "$version" "$notes"
   # Pushing to a URL skips origin's tracking refs; refresh them so a later plain git push works.
   if git -C "$REPO_DIR" fetch --quiet origin 2>/dev/null; then
     git -C "$REPO_DIR" branch --quiet --set-upstream-to="origin/$branch" "$branch" 2>/dev/null || true

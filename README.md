@@ -44,6 +44,8 @@ Apply this plan? [y/n]
 ```
 
 Answer `[y/n]` questions with a single key; there is no need to press Enter.
+Other keys are ignored, so a typo never answers a question, and on a Korean
+keyboard layout `ㅛ` and `ㅜ` (the same keys) work as `y` and `n`.
 
 menvctl links itself to `~/.local/bin/menvctl`, so later runs are just
 `menvctl`.
@@ -58,7 +60,7 @@ menvctl links itself to `~/.local/bin/menvctl`, so later runs are just
 | `menvctl update` | Check out the latest release, show its changelog, and apply it |
 | `menvctl check` | Print a notice if a newer release exists (runs from `~/.zshrc`) |
 | `menvctl capture` | Add skills and plugins you installed by hand to `packages.json` |
-| `menvctl release X.Y.Z` | Check menvctl in a sandbox, then commit, tag, and publish this checkout, and apply it here |
+| `menvctl release [X.Y.Z]` | Check menvctl in a sandbox, then commit, tag, and publish this checkout, and apply it here. Without a version: the next minor one (v1.4.2 -> v1.5.0) |
 
 ## Common tasks
 
@@ -77,7 +79,7 @@ one Mac only use `menvctl --reconfigure` and are never published.
 | Change the global rules | Edit `claude/CLAUDE.md` or `codex/AGENTS.md`, then release. This Mac sees the edit at once: the rules are symlinks into the repo |
 | Change shared Claude settings | Edit `claude/settings.shared.json`, then release. Keys you remove are removed from each Mac unless edited there |
 | Skip a skill, an agent, or the update notice on this Mac only | `menvctl --reconfigure` |
-| Publish my changes | `menvctl release X.Y.Z` (it writes the CHANGELOG section if you have not) |
+| Publish my changes | `menvctl release` (next minor version), or `menvctl release X.Y.Z` to choose. It writes the CHANGELOG section if you have not |
 | Undo something menvctl replaced or removed | Copy it back from `~/.menvctl-backup/<timestamp>/`, which mirrors paths under `~` |
 
 Not managed, so set by hand on each Mac: model choice, credentials, Codex hooks,
@@ -206,16 +208,22 @@ the plan puts the previous checkout back.
    Other edits are listed by file name only, so add a sentence under a file if
    what changed matters. `menvctl update` shows this section on every Mac, and
    the release commit uses it.
-4. Run `menvctl release X.Y.Z`. It works in six numbered steps:
+4. Run `menvctl release` for the next minor version (v1.4.2 -> v1.5.0), or
+   `menvctl release X.Y.Z` to pick one, such as 1.4.3 for a small fix. It
+   prints the version it chose and works in six numbered steps:
 
    ```text
    [1/6] Checking the version and release notes
    [2/6] Checking menvctl in a throwaway sandbox (simulated installs and releases, about 1-2 minutes)
    [3/6] Scanning for secrets
    [4/6] Committing and tagging vX.Y.Z
-   [5/6] Pushing main and vX.Y.Z to https://github.com/...
+   [5/6] Pushing main and vX.Y.Z to https://github.com/..., and creating the GitHub release page
    [6/6] Applying vX.Y.Z on this Mac
    ```
+
+   Step 5 also creates the version's page under the repo's **Releases**, with the
+   CHANGELOG section as its text, so the notes show on GitHub. It needs the `gh`
+   CLI logged in; without it, release prints the command to run by hand.
 
    Step 2 runs `tests/install-test.sh`: it builds a temporary home folder and a
    temporary Git server, then installs, updates, and releases made-up versions

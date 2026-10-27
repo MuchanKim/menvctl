@@ -58,7 +58,16 @@ case "$1 $2 $3" in
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 EOF
-chmod +x "$WORK_DIR/bin/codex" "$WORK_DIR/bin/claude"
+cat >"$WORK_DIR/bin/gh" <<'EOF'
+#!/bin/bash
+# Stub: logged in; "release create" records its arguments and notes.
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "release create") { printf 'ARGS %s\n' "$*"; cat; } >>"$HOME/.stub-gh-releases" ;;
+  *) echo "unexpected: $*" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$WORK_DIR/bin/codex" "$WORK_DIR/bin/claude" "$WORK_DIR/bin/gh"
 export PATH="$WORK_DIR/bin:$PATH"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
@@ -531,9 +540,15 @@ printf 'n\n' | MENVCTL_RELEASE_TEST=true /bin/bash "$AUTHOR/menvctl" release 1.5
 MENVCTL_RELEASE_TEST=true /bin/bash "$AUTHOR/menvctl" release 1.5.0 </dev/null >/dev/null
 [[ -z "$(remote_tag v1.5.0)" ]] || fail "release published without a yes"
 
-# Accepted: committed, tagged, pushed, and recorded here without leaving main.
+# Accepted: committed, tagged, pushed, given a GitHub release page, and recorded here
+# without leaving main. origin gets a GitHub-style URL that git maps to the local server.
+git config --global url."$WORK_DIR/origin.git".insteadOf "https://github.com/test-owner/menvctl.git"
+git -C "$AUTHOR" remote set-url origin "https://github.com/test-owner/menvctl.git"
 MENVCTL_RELEASE_TEST=true /bin/bash "$AUTHOR/menvctl" release 1.5.0 --yes >"$WORK_DIR/release.log" 2>&1
 [[ -n "$(remote_tag v1.5.0)" ]] || fail "release tag not pushed"
+grep -qF "ARGS release create v1.5.0 --repo test-owner/menvctl --title v1.5.0" "$HOME/.stub-gh-releases" ||
+  fail "GitHub release page not created"
+grep -qF 'Claude plugin `handmade@claude-plugins-official`' "$HOME/.stub-gh-releases" || fail "GitHub release page lacks the notes"
 [[ -z "$(remote_tag private-review)" ]] || fail "release published an unrelated tag"
 [[ "$(git -C "$AUTHOR" ls-remote origin refs/heads/main | cut -f1)" == "$(git -C "$AUTHOR" rev-parse HEAD)" ]] ||
   fail "release commit not pushed"
@@ -545,5 +560,44 @@ MENVCTL_RELEASE_TEST=true /bin/bash "$AUTHOR/menvctl" release 1.5.0 --yes >"$WOR
 commit_message="$(git -C "$AUTHOR" log -1 --format=%B)"
 grep -qF 'Claude plugin `handmade@claude-plugins-official`' <<<"$commit_message" || fail "release commit lacks its notes"
 [[ "$(jq -r .version "$AUTHOR_STATE")" == v1.5.0 ]] || fail "release not recorded on the authoring machine"
+
+step "Prompts in a real terminal: typos are ignored, Korean-layout keys work"
+# expect drives a pseudo terminal, where a question takes a single key.
+mkdir -p "$HOME/.claude/skills/key-skill"
+printf -- '---\nname: key-skill\n---\n' >"$HOME/.claude/skills/key-skill/SKILL.md"
+# Quoted heredoc: the Tcl script reaches expect untouched by bash.
+cat >"$WORK_DIR/keys.exp" <<'EXP'
+set timeout 15
+spawn /bin/bash [lindex $argv 0] capture
+expect {
+  -re {Track it\? \[y/n\] $} { }
+  timeout { puts "KEYS: no prompt"; exit 2 }
+}
+sleep 0.3
+foreach key [list "ㅎ" "x" "\r" "\033\[A"] { send -- $key; sleep 0.3 }
+set timeout 2
+expect {
+  "No items added." { puts "KEYS: a typo answered the question"; exit 3 }
+  timeout { }
+}
+set timeout 15
+send -- "ㅜ"
+expect {
+  "No items added." { puts "KEYS-OK"; exit 0 }
+  timeout { puts "KEYS: Korean n ignored"; exit 4 }
+}
+EXP
+/usr/bin/expect -f "$WORK_DIR/keys.exp" "$AUTHOR/menvctl" >"$WORK_DIR/keys.log" 2>&1 || true
+grep -q "KEYS-OK" "$WORK_DIR/keys.log" ||
+  fail "terminal prompt: $(grep -o 'KEYS: [^[:cntrl:]]*' "$WORK_DIR/keys.log" || tail -3 "$WORK_DIR/keys.log")"
+rm -rf "$HOME/.claude/skills/key-skill"
+
+# No version given: the next minor version after the published v1.5.0.
+printf '\n- Keep reviews short.\n' >>"$AUTHOR/codex/AGENTS.md"
+MENVCTL_RELEASE_TEST=true /bin/bash "$AUTHOR/menvctl" release --yes >"$WORK_DIR/release-next.log" 2>&1
+grep -qF "No version given, so this is v1.6.0: the next minor version after v1.5.0" "$WORK_DIR/release-next.log" ||
+  fail "next minor version not announced"
+[[ -n "$(remote_tag v1.6.0)" ]] || fail "release without a version did not publish v1.6.0"
+grep -qx '## \[1\.6\.0\] - .*' "$AUTHOR/CHANGELOG.md" || fail "notes for the computed version not written"
 
 printf 'PASS\n'

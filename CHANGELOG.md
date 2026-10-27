@@ -6,6 +6,24 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-27
+
+### Added
+
+- `menvctl release` creates the version's GitHub release page, with its
+  CHANGELOG section as the text, so the notes show under the repo's Releases.
+  It needs the `gh` CLI logged in; without it, release prints the command to
+  run by hand.
+- `menvctl release` without a version releases the next minor version
+  (v1.0.0 -> v1.1.0). `menvctl release X.Y.Z` still picks one.
+
+### Changed
+
+- `[y/n]` questions take only `y` or `n`. Other keys, such as a typo, Enter,
+  or an arrow key, are ignored instead of answering no, so a slip no longer
+  cancels a release. On a Korean keyboard layout `ㅛ` and `ㅜ` work as `y` and
+  `n`.
+
 ## [1.0.0] - 2026-10-27
 
 ### Added
