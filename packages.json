@@ -5,7 +5,9 @@
       "swift-concurrency-pro",
       "swift-conventions",
       "swift-testing-pro",
-      "swiftui-pro"
+      "swiftui-pro",
+      "plan-brief",
+      "result-brief"
     ],
     "plugins": [
       {
@@ -31,7 +33,9 @@
       "swift-concurrency-pro",
       "swift-conventions",
       "swift-testing-pro",
-      "swiftui-pro"
+      "swiftui-pro",
+      "plan-brief",
+      "result-brief"
     ],
     "plugins": [
       { "id": "github@openai-curated-remote", "cleanup": [] },

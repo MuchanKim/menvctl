@@ -1,0 +1,30 @@
+{
+  "prefix": "App/",
+  "commits": [
+    {
+      "group": "A",
+      "kind": "fix",
+      "message": "[Fix] #123 - 목록 갱신 경합을 제거\n\nWhat\n- 갱신 경로의 await를 제거하고 동기 호출로 변경함\n\nWhy\n- 두 갱신이 서로 끼어들어 항목이 남는 문제가 있었음",
+      "files": [
+        "Sources/List/ListController.swift",
+        "Sources/List/ListCache.swift"
+      ],
+      "impact": "빠르게 필터를 바꿔도 항목이 남지 않음",
+      "verify": "미실행 — 실행 후 명령·결과·시각으로 교체",
+      "review": "미실행 — 실제 리뷰가 있을 때 대상 revision과 결과를 기록",
+      "revert": "되돌리면 커밋 2도 함께 되돌린다"
+    },
+    {
+      "group": "A2",
+      "kind": "test",
+      "message": "[Test] #123 - 목록 갱신 테스트 추가\n\nWhat\n- 겹친 갱신 뒤 빈 목록이면 항목이 0개인지 확인하는 테스트를 추가함\n\nWhy\n- 커밋 1의 동작을 고정할 테스트가 없었음",
+      "files": [
+        "Tests/ListControllerTests.swift"
+      ],
+      "impact": "없음",
+      "verify": "미실행 — 실행 후 명령·결과·시각으로 교체",
+      "requires": "커밋 1의 동기 API를 호출함",
+      "revert": "단독으로 되돌릴 수 있음"
+    }
+  ]
+}

@@ -257,6 +257,8 @@ menvctl offers to install gstack and warns in the plan when it is missing.
 | `swift-conventions` | Personal Swift and SwiftUI conventions | ✓ | ✓ |
 | `swiftui-pro`, `swift-concurrency-pro`, `swift-testing-pro` | Customized versions of Paul Hudson's agent skills | ✓ | ✓ |
 | `liquid-glass` | Apple Liquid Glass controls and navigation | ✓ | ✓ |
+| `plan-brief` | HTML planning briefs with requirements, scenarios, acceptance criteria, and open decisions | ✓ | ✓ |
+| `result-brief` | HTML result briefs with actual changes, verification evidence, reviewer focus, and merge conditions | ✓ | ✓ |
 
 Claude Code implements and Codex reviews against the same rules, so these go to
 both. Planning, implementation, and review skills are not tracked here, because
@@ -266,6 +268,7 @@ gstack covers those stages.
 
 ```sh
 tests/install-test.sh
+python3 -B -m unittest discover -s skills/result-brief/tests -v
 ```
 
 Publishes v1.0.0, v1.1.0, and a prerelease tag from a copy of the repo into a

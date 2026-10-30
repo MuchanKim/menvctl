@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+/* 작업 보고서 공통 양식. build.py가 제목·생성 정보·diff 데이터·본문 자리표시자를 채운다. */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f2f4f7; --fg: #161a22; --muted: #5b6475; --faint: #8b93a3;
+  --line: #e4e7ec; --line-strong: #cfd4dc;
+  --accent: #2557d6; --accent-soft: #e9effd;
+  --before: #c03a2b; --before-soft: #fdeceb;
+  --after: #1d7a48; --after-soft: #e5f4ec;
+  --warn: #946200; --warn-soft: #fff3d9;
+  --test: #6a3fc8; --test-soft: #f0eafd;
+  --del-bg: #ffeef0; --del-mark: #fdc4c9; --add-bg: #e8fbee; --add-mark: #a9ecbd;
+  --hunk-bg: #eef3fc; --hunk-fg: #4b5d80; --gutter: #fafbfc; --gutter-fg: #9aa2b1;
+  --syn-kw: #c4302b; --syn-type: #6c3fc4; --syn-str: #0b4a8f; --syn-com: #6f7887; --syn-attr: #a14a00; --syn-num: #0657b5; --syn-fn: #7a3fc0;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.04);
+  --radius: 10px;
+  --font-body: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, "D2Coding", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116; --surface: #161b22; --surface-2: #1c222b; --fg: #e6e9ee; --muted: #9aa3b2; --faint: #6e7787;
+    --line: #262d38; --line-strong: #353e4b;
+    --accent: #7ea6f7; --accent-soft: #1b2a45;
+    --before: #f08b78; --before-soft: #3a1f1b;
+    --after: #6dc690; --after-soft: #17301f;
+    --warn: #e3b351; --warn-soft: #362a12;
+    --test: #b79cf5; --test-soft: #2a2140;
+    --del-bg: rgb(248 81 73 / 0.12); --del-mark: rgb(248 81 73 / 0.38); --add-bg: rgb(46 160 67 / 0.13); --add-mark: rgb(46 160 67 / 0.4);
+    --hunk-bg: #182237; --hunk-fg: #8fa3c8; --gutter: #12161c; --gutter-fg: #5d6675;
+    --syn-kw: #ff7b72; --syn-type: #d2a8ff; --syn-str: #a5d6ff; --syn-com: #8b949e; --syn-attr: #ffa657; --syn-num: #79c0ff; --syn-fn: #d2a8ff;
+    --shadow: none;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1116; --surface: #161b22; --surface-2: #1c222b; --fg: #e6e9ee; --muted: #9aa3b2; --faint: #6e7787;
+  --line: #262d38; --line-strong: #353e4b;
+  --accent: #7ea6f7; --accent-soft: #1b2a45;
+  --before: #f08b78; --before-soft: #3a1f1b;
+  --after: #6dc690; --after-soft: #17301f;
+  --warn: #e3b351; --warn-soft: #362a12;
+  --test: #b79cf5; --test-soft: #2a2140;
+  --del-bg: rgb(248 81 73 / 0.12); --del-mark: rgb(248 81 73 / 0.38); --add-bg: rgb(46 160 67 / 0.13); --add-mark: rgb(46 160 67 / 0.4);
+  --hunk-bg: #182237; --hunk-fg: #8fa3c8; --gutter: #12161c; --gutter-fg: #5d6675;
+  --syn-kw: #ff7b72; --syn-type: #d2a8ff; --syn-str: #a5d6ff; --syn-com: #8b949e; --syn-attr: #ffa657; --syn-num: #79c0ff; --syn-fn: #d2a8ff;
+  --shadow: none;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.65 var(--font-body); -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, kbd { font-family: var(--font-mono); font-size: 0.86em; }
+:not(pre) > code { background: var(--surface-2); border: 1px solid var(--line); padding: 0 5px; border-radius: 5px; white-space: nowrap; }
+h1, h2, h3, h4 { margin: 0; line-height: 1.3; text-wrap: balance; }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 20px; }
+li + li { margin-top: 4px; }
+button { font: inherit; color: inherit; }
+
+/* ---------- Layout ---------- */
+.shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 48px; max-width: 1320px; margin: 0 auto; padding: 0 32px; }
+.toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 32px 0; display: flex; flex-direction: column; gap: 20px; }
+.toc .brand { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.toc .brand b { display: block; color: var(--fg); font-size: 14px; letter-spacing: 0; text-transform: none; margin-top: 2px; }
+.toc nav ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 1px; }
+.toc nav li { margin: 0; }
+.toc nav a { display: flex; gap: 8px; padding: 5px 10px; border-radius: 7px; color: var(--muted); font-size: 13.5px; line-height: 1.4; }
+.toc nav a:hover { background: var(--surface-2); text-decoration: none; color: var(--fg); }
+.toc nav .num { flex: none; width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font: 600 10.5px var(--font-mono); background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); margin-top: 1px; }
+.toc nav li.active > .tab-link { color: var(--fg); background: var(--surface); box-shadow: var(--shadow); font-weight: 650; }
+.toc nav li.active > .tab-link .num { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.toc nav .group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--faint); padding: 14px 10px 4px; }
+.toc nav .sub { display: none; padding: 2px 0 6px 18px; }
+.toc nav li.active > .sub { display: grid; }
+.toc nav .sub a { font-size: 12.5px; padding: 3px 10px; border-left: 2px solid var(--line); border-radius: 0 6px 6px 0; }
+.toc nav .sub a.active { color: var(--accent); border-left-color: var(--accent); }
+.toc .tools { margin-top: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+main { min-width: 0; padding: 40px 0 120px; display: grid; gap: 64px; max-width: 980px; align-content: start; }
+
+@media (max-width: 1080px) {
+  .shell { grid-template-columns: minmax(0, 1fr); padding: 0 16px; gap: 0; }
+  .toc { position: static; height: auto; padding: 20px 0 0; }
+  .toc nav ol { display: flex; flex-wrap: wrap; gap: 4px; }
+  .toc nav a { border: 1px solid var(--line); background: var(--surface); padding: 3px 10px; }
+  .toc nav .sub, .toc nav li.active > .sub, .toc nav .group-label { display: none; }
+  .toc .tools { margin-top: 0; }
+  main { padding-top: 28px; gap: 48px; }
+}
+
+/* ---------- Tabs · commit pages ---------- */
+.tab-page { display: none; }
+.tab-page.active { display: grid; gap: 56px; align-content: start; min-width: 0; }
+.tab-page > * { min-width: 0; }
+.commit-head { display: grid; gap: 14px; }
+.commit-head .eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 13px; color: var(--muted); }
+.commit-head .issue { font: 600 13px var(--font-mono); color: var(--fg); }
+.commit-head h1 { font-size: clamp(22px, 2.8vw, 28px); letter-spacing: -0.02em; }
+.count .p, .row .p { color: var(--after); } .count .m, .row .m { color: var(--before); }
+.msg-card { overflow: hidden; }
+.msg-bar { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 650; color: var(--faint); letter-spacing: 0.04em; }
+.msg-full { margin: 0; padding: 14px 16px; font: 13px/1.7 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-full b { font-weight: 700; }
+.pager { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.pager a { padding: 12px 16px; display: grid; gap: 2px; color: var(--fg); }
+.pager a:hover { text-decoration: none; border-color: var(--accent); }
+.pager a.next { text-align: right; }
+.points { display: grid; gap: 8px; }
+.points li { margin: 0; }
+.commits .commit-link { color: inherit; display: grid; gap: 6px; }
+.commits .commit-link:hover { text-decoration: none; border-color: var(--accent); }
+/* ---------- 실무 보고서 블록: BLUF · 메타 · 위험 ---------- */
+.bluf { padding: 18px 20px; display: grid; gap: 12px; border-left: 4px solid var(--accent); }
+.bluf .k { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--accent); }
+.bluf .line { font-size: 16.5px; font-weight: 650; line-height: 1.5; }
+.bluf ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.bluf ol li { margin: 0; }
+.commit-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin: 0; }
+.commit-meta > div { background: var(--surface); padding: 10px 14px; display: grid; gap: 3px; align-content: start; }
+.commit-meta dt { font-size: 11.5px; color: var(--faint); font-weight: 600; letter-spacing: 0.04em; }
+.commit-meta dd { margin: 0; font-size: 13.5px; }
+.lv { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 99px; white-space: nowrap; }
+.lv.high { background: var(--before-soft); color: var(--before); }
+.lv.medium { background: var(--warn-soft); color: var(--warn); }
+.lv.low { background: var(--after-soft); color: var(--after); }
+.decision { padding: 16px 18px; display: grid; gap: 10px; }
+.decision h3 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.decision dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 14px; }
+.decision dt { color: var(--faint); font-weight: 650; font-size: 12.5px; padding-top: 2px; }
+.decision dd { margin: 0; }
+@media (max-width: 560px) { .decision dl { grid-template-columns: 1fr; } .decision dd { margin-bottom: 6px; } }
+.commits .commit-link .go { margin-left: auto; color: var(--accent); font-family: var(--font-body); }
+
+/* ---------- Common blocks ---------- */
+section { display: grid; gap: 20px; align-content: start; }
+main > *, section > *, .stack > *, figure > * { min-width: 0; }
+section > header { display: grid; gap: 6px; }
+section h2 { font-size: 22px; letter-spacing: -0.01em; }
+section h2 .idx { font: 600 13px var(--font-mono); color: var(--faint); margin-right: 8px; vertical-align: 3px; }
+.lede { color: var(--muted); max-width: 74ch; }
+h3 { font-size: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.stack { display: grid; gap: 14px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--font-mono); }
+
+.pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 650; line-height: 1; padding: 4px 8px; border-radius: 99px; white-space: nowrap; letter-spacing: 0.01em; }
+.pill.fix { background: var(--before-soft); color: var(--before); }
+.pill.refactor { background: var(--accent-soft); color: var(--accent); }
+.pill.test { background: var(--test-soft); color: var(--test); }
+.pill.chore, .pill.neutral { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.pill.ok { background: var(--after-soft); color: var(--after); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.must { background: var(--before-soft); color: var(--before); }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); background: var(--surface); padding: 4px 10px; border-radius: 7px; font-size: 12.5px; cursor: pointer; color: var(--muted); }
+.btn:hover { color: var(--fg); border-color: var(--faint); }
+.btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+
+.callout { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 14px 16px; border-radius: var(--radius); background: var(--warn-soft); color: var(--fg); font-size: 14px; }
+.callout::before { content: "!"; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--warn); color: var(--surface); font: 700 12px var(--font-mono); margin-top: 1px; }
+.callout.info { background: var(--accent-soft); }
+.callout.info::before { content: "i"; background: var(--accent); }
+
+/* ---------- Hero ---------- */
+.hero { display: grid; gap: 18px; }
+.hero .eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; color: var(--muted); }
+.hero .eyebrow .issue { font: 600 13px var(--font-mono); color: var(--fg); }
+.hero h1 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -0.02em; }
+.hero .sub { font-size: 16px; color: var(--muted); max-width: 70ch; }
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.meta > div { background: var(--surface); padding: 10px 14px; display: grid; gap: 2px; min-width: 0; }
+.meta dt { font-size: 11.5px; color: var(--faint); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.meta dd { margin: 0; font: 13px var(--font-mono); overflow-wrap: anywhere; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.stat { padding: 14px 16px; display: grid; gap: 2px; }
+.stat .n { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat .n small { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.stat .l { font-size: 12.5px; color: var(--muted); }
+.n .plus { color: var(--after); } .n .minus { color: var(--before); }
+
+/* ---------- TL;DR ---------- */
+.tldr { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.tldr > div { padding: 16px 18px; display: grid; gap: 6px; align-content: start; border-top: 3px solid var(--line-strong); }
+.tldr .k { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.tldr .problem { border-top-color: var(--before); } .tldr .problem .k { color: var(--before); }
+.tldr .solution { border-top-color: var(--after); } .tldr .solution .k { color: var(--after); }
+.tldr .check { border-top-color: var(--warn); } .tldr .check .k { color: var(--warn); }
+
+/* ---------- Change groups ---------- */
+.groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; }
+.group { padding: 14px 16px; display: grid; gap: 8px; align-content: start; color: inherit; transition: border-color .15s; }
+a.group:hover { text-decoration: none; border-color: var(--accent); }
+.group .top { display: flex; align-items: center; gap: 8px; }
+.group .letter { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--fg); color: var(--bg); font: 700 13px var(--font-mono); }
+.group h3 { font-size: 15px; }
+.group p { font-size: 13.5px; color: var(--muted); }
+.group .files { font: 12px var(--font-mono); color: var(--faint); overflow-wrap: anywhere; }
+
+/* ---------- Figures ---------- */
+figure { margin: 0; display: grid; gap: 10px; }
+.figure-box { padding: 16px; overflow-x: auto; }
+.figure-box svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--fg); font-family: var(--font-body); }
+figcaption { font-size: 13px; color: var(--muted); max-width: 80ch; }
+
+/* ---------- Compare table ---------- */
+.table-wrap { overflow-x: auto; }
+table.grid { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+table.grid th, table.grid td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.grid th { font-size: 11.5px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); background: var(--surface-2); }
+table.grid tr:last-child td { border-bottom: 0; }
+table.grid td:first-child { white-space: nowrap; font-weight: 600; }
+table.grid .b { color: var(--before); } table.grid .a { color: var(--after); }
+
+/* ---------- Diff viewer ---------- */
+.diff { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.diff + .diff { margin-top: 12px; }
+.diff-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); min-height: 42px; flex-wrap: wrap; }
+.diff[data-collapsed="true"] .diff-head { border-bottom: 0; }
+.diff[data-collapsed="true"] .diff-body { display: none; }
+.diff-head .chev { width: 22px; height: 22px; border: 0; background: none; cursor: pointer; color: var(--muted); display: grid; place-items: center; border-radius: 5px; padding: 0; }
+.diff-head .chev:hover { background: var(--line); }
+.diff-head .chev svg { transition: transform .15s; }
+.diff[data-collapsed="true"] .chev svg { transform: rotate(-90deg); }
+.diff-head .path { font: 12.5px var(--font-mono); min-width: 0; overflow-wrap: break-word; flex: 1 1 260px; }
+.diff-head .path .dir { color: var(--faint); }
+.diff-head .path .name { font-weight: 650; }
+.diff-head .path .from { display: block; color: var(--faint); font-size: 11.5px; }
+.diff-head .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.diff-head .count { font: 12px var(--font-mono); white-space: nowrap; }
+.diff-head .count .p { color: var(--after); } .diff-head .count .m { color: var(--before); }
+.bar { display: inline-flex; gap: 1px; margin-left: 6px; vertical-align: -1px; }
+.bar i { width: 7px; height: 7px; border-radius: 1px; background: var(--line-strong); }
+.bar i.p { background: var(--after); } .bar i.m { background: var(--before); }
+.status { font: 700 10.5px var(--font-mono); width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; flex: none; }
+.status.M { background: var(--warn-soft); color: var(--warn); }
+.status.A { background: var(--after-soft); color: var(--after); }
+.status.D { background: var(--before-soft); color: var(--before); }
+.status.R { background: var(--accent-soft); color: var(--accent); }
+.diff-note { padding: 9px 14px; font-size: 13.5px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.diff-body { overflow-x: auto; }
+table.d { border-collapse: collapse; width: 100%; font: 12.5px/1.6 var(--font-mono); tab-size: 4; }
+table.d td { padding: 0; vertical-align: top; }
+table.d td.ln { width: 1%; min-width: 44px; padding: 0 8px; text-align: right; color: var(--gutter-fg); background: var(--gutter); user-select: none; font-size: 11.5px; white-space: nowrap; }
+table.d td.ln + td.ln { border-right: 1px solid var(--line); }
+table.d td.code { white-space: pre; padding: 0 16px 0 0; }
+.wrap table.d td.code { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.d td.code .sg { display: inline-block; width: 22px; text-align: center; color: var(--faint); user-select: none; }
+table.d tr.add td.code, table.d tr.add td.ln { background: var(--add-bg); }
+table.d tr.del td.code, table.d tr.del td.ln { background: var(--del-bg); }
+table.d tr.add .sg { color: var(--after); } table.d tr.del .sg { color: var(--before); }
+table.d tr.add mark { background: var(--add-mark); color: inherit; border-radius: 2px; }
+table.d tr.del mark { background: var(--del-mark); color: inherit; border-radius: 2px; }
+table.d tr.hunk td { background: var(--hunk-bg); color: var(--hunk-fg); padding: 4px 12px; font-size: 11.5px; white-space: pre; }
+table.d tr.hunk td.ln { background: var(--hunk-bg); }
+table.d tr.fold td { background: var(--surface-2); color: var(--muted); font: 12px var(--font-body); padding: 5px 12px; cursor: pointer; }
+table.d tr.fold td:hover { color: var(--accent); }
+table.d tr.noise-row { display: none; }
+.show-noise table.d tr.noise-row { display: table-row; }
+.diff.clamp .diff-body { max-height: 440px; overflow: hidden; position: relative; }
+.diff.clamp .diff-body::after { content: ""; position: absolute; inset: auto 0 0 0; height: 72px; background: linear-gradient(transparent, var(--surface)); pointer-events: none; }
+.diff .more { display: none; width: 100%; border: 0; border-top: 1px solid var(--line); background: var(--surface-2); color: var(--accent); font-size: 12.5px; font-weight: 600; padding: 8px; cursor: pointer; }
+.diff.clamp .more { display: block; }
+.diff[data-collapsed="true"] .more { display: none; }
+.diff .empty { padding: 14px; color: var(--muted); font-size: 13px; }
+.k-kw { color: var(--syn-kw); } .k-ty { color: var(--syn-type); } .k-str { color: var(--syn-str); }
+.k-com { color: var(--syn-com); font-style: italic; } .k-attr { color: var(--syn-attr); } .k-num { color: var(--syn-num); } .k-fn { color: var(--syn-fn); }
+
+/* ---------- File browser ---------- */
+.browser { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
+.tree { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; padding: 10px 6px; font-size: 12.5px; }
+.tree .dir { font: 600 11.5px var(--font-mono); color: var(--faint); padding: 8px 8px 3px; overflow-wrap: break-word; }
+.tree a { display: flex; align-items: center; gap: 7px; padding: 3px 8px; border-radius: 6px; color: var(--fg); font-family: var(--font-mono); font-size: 12px; }
+.tree a:hover { background: var(--surface-2); text-decoration: none; }
+.tree a .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree a .status { width: 16px; height: 16px; font-size: 9.5px; }
+.tree a .ct { font-size: 10.5px; color: var(--faint); }
+.tree a.hidden { display: none; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.toolbar input[type="search"] { font: 13px var(--font-body); color: var(--fg); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 7px; padding: 4px 10px; min-width: 200px; flex: 1 1 200px; }
+.file-list .diff.hidden { display: none; }
+@media (max-width: 860px) { .browser { grid-template-columns: minmax(0, 1fr); } .tree { position: static; max-height: 260px; } }
+
+/* ---------- Commits ---------- */
+.commits { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; position: relative; }
+.commits li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 14px; margin: 0; padding-bottom: 14px; position: relative; }
+.commits li::before { content: ""; position: absolute; left: 13px; top: 28px; bottom: 0; width: 2px; background: var(--line); }
+.commits li:last-child::before { display: none; }
+.commits .dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-mono); background: var(--surface); border: 2px solid var(--line-strong); color: var(--muted); z-index: 1; }
+.commits .body { padding: 10px 14px; display: grid; gap: 6px; }
+.commits .msg { font: 13px var(--font-mono); overflow-wrap: anywhere; }
+.commits .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* ---------- Verification ---------- */
+.verify { display: grid; gap: 10px; }
+.run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 14px; }
+.run .icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font-mono); margin-top: 1px; }
+.run .icon.ok { background: var(--after-soft); color: var(--after); }
+.run .icon.warn { background: var(--warn-soft); color: var(--warn); }
+.run .icon.skip { background: var(--surface-2); color: var(--faint); border: 1px solid var(--line); }
+.run .what { display: grid; gap: 4px; min-width: 0; }
+.run pre { margin: 0; font: 12px/1.5 var(--font-mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; overflow-x: auto; color: var(--muted); }
+.run .result { font-size: 13px; font-weight: 600; white-space: nowrap; }
+
+/* ---------- Device checklist ---------- */
+.device-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.progress { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.progress .track { width: 160px; height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.progress .fill { height: 100%; width: 0; background: var(--after); transition: width .2s; }
+.device { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.device li { margin: 0; }
+.device label { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 14px; padding: 14px 16px; cursor: pointer; }
+.device input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--after); cursor: pointer; }
+.device .t { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; font-weight: 650; }
+.device .steps { margin-top: 8px; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 12px; font-size: 13.5px; }
+.device .steps dt { color: var(--faint); font-size: 12px; font-weight: 600; padding-top: 1px; }
+.device .steps dd { margin: 0; }
+.device .steps ol { padding-left: 18px; }
+.device .steps ol li + li { margin-top: 2px; }
+.device input:checked ~ div .t { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.device label:has(input:checked) { background: var(--surface-2); }
+
+/* ---------- Risks ---------- */
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.two > .card { padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+.two h3 { font-size: 14px; display: flex; gap: 8px; align-items: center; }
+
+footer.gen { color: var(--faint); font-size: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media print {
+  .toc, .toolbar, .tree, .btn, .chev { display: none !important; }
+  .shell { display: block; padding: 0; }
+  .diff[data-collapsed="true"] .diff-body { display: block; }
+  section { break-inside: avoid-page; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="toc" aria-label="목차">
+    <div class="brand">작업 보고서<b id="toc-title"></b></div>
+    <nav><ol id="toc-list"></ol></nav>
+    <div class="tools">
+      <button class="btn" id="theme-btn" type="button">테마 전환</button>
+      <button class="btn" id="wrap-btn" type="button" aria-pressed="false">코드 줄바꿈</button>
+    </div>
+  </aside>
+  <main id="main">
+{{CONTENT}}
+    <footer class="gen">{{GENERATED}}</footer>
+  </main>
+</div>
+
+<script type="application/json" id="diff-data">{{DIFF_DATA}}</script>
+<script>
+(() => {
+  "use strict";
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  const DATA = JSON.parse($("#diff-data").textContent);
+  const NOTES = (() => { const el = $("#file-notes"); return el ? JSON.parse(el.textContent) : {}; })();
+  document.querySelector(".brand").firstChild.textContent = DATA.mode === "planning" ? "기획 브리프" : "결과 브리프";
+  const REPORT_KEY = "report:" + DATA.reportId;
+  const validationErrors = [...(DATA.issues || [])];
+  window.reviewBriefValidation = { errors: validationErrors, ready: false };
+  const reportError = (message, host) => {
+    validationErrors.push(message);
+    if (host) { host.dataset.validationError = "true"; host.innerHTML = `<div class="callout" role="alert">${esc(message)}</div>`; }
+  };
+
+  // ---------- Theme ----------
+  const root = document.documentElement;
+  const savedTheme = store.get("report:theme");
+  if (savedTheme) root.dataset.theme = savedTheme;
+  $("#theme-btn").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    store.set("report:theme", root.dataset.theme);
+  });
+  const wrapBtn = $("#wrap-btn");
+  wrapBtn.addEventListener("click", () => {
+    const on = document.body.classList.toggle("wrap");
+    wrapBtn.setAttribute("aria-pressed", String(on));
+  });
+
+  // ---------- Notes lookup ----------
+  function noteFor(path) {
+    let best = null, len = -1;
+    for (const key of Object.keys(NOTES)) {
+      if ((path === key || path.endsWith("/" + key)) && key.length > len) { best = NOTES[key]; len = key.length; }
+    }
+    return best || {};
+  }
+  const groupsOf = (path) => (noteFor(path).groups || "").split(",").map((g) => g.trim()).filter(Boolean);
+
+
+  // ---------- Swift highlighter ----------
+  const KW = new Set(("actor associatedtype async await break case catch class continue default defer do else enum extension fallthrough false fileprivate final for func guard if import in init inout internal is lazy let mutating nil nonisolated nonmutating open operator override private protocol public repeat rethrows return self Self some any static struct subscript super switch throw throws true try typealias var weak where while get set willSet didSet consuming borrowing sending isolated").split(" "));
+  const TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|(@[A-Za-z_]\w*)|(#\w+)|(\b\d[\d_]*(?:\.\d[\d_]*)?\b)|(\b[A-Za-z_]\w*\b)/g;
+  function tokenize(text, lang) {
+    if (lang !== "swift") {
+      if (lang === "plain") return [{ t: text, c: "" }];
+      const out = []; let last = 0;
+      text.replace(/"(?:[^"\\]|\\.)*"/g, (m, i) => { if (i > last) out.push({ t: text.slice(last, i), c: "" }); out.push({ t: m, c: "k-str" }); last = i + m.length; });
+      if (last < text.length) out.push({ t: text.slice(last), c: "" });
+      return out;
+    }
+    const out = []; let last = 0; let m;
+    TOKEN.lastIndex = 0;
+    while ((m = TOKEN.exec(text))) {
+      if (m.index > last) out.push({ t: text.slice(last, m.index), c: "" });
+      let c = "";
+      if (m[1]) c = "k-com";
+      else if (m[2]) c = "k-str";
+      else if (m[3] || m[4]) c = "k-attr";
+      else if (m[5]) c = "k-num";
+      else if (m[6]) {
+        const w = m[6];
+        if (KW.has(w)) c = "k-kw";
+        else if (/^[A-Z]/.test(w)) c = "k-ty";
+        else if (text[m.index + w.length] === "(") c = "k-fn";
+      }
+      out.push({ t: m[0], c });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ t: text.slice(last), c: "" });
+    return out;
+  }
+  // tokens + [start,end) 하이라이트 범위 → HTML
+  function render(text, lang, range) {
+    const toks = tokenize(text, lang);
+    let pos = 0, html = "";
+    for (const tk of toks) {
+      const s = pos, e = pos + tk.t.length; pos = e;
+      const parts = [];
+      if (range && range[0] < e && range[1] > s) {
+        const a = Math.max(range[0], s) - s, b = Math.min(range[1], e) - s;
+        if (a > 0) parts.push([tk.t.slice(0, a), false]);
+        parts.push([tk.t.slice(a, b), true]);
+        if (b < tk.t.length) parts.push([tk.t.slice(b), false]);
+      } else parts.push([tk.t, false]);
+      for (const [t, marked] of parts) {
+        const inner = tk.c ? `<span class="${tk.c}">${esc(t)}</span>` : esc(t);
+        html += marked ? `<mark>${inner}</mark>` : inner;
+      }
+    }
+    return html;
+  }
+  // 짝지은 -/+ 줄의 공통 앞뒤를 빼고 바뀐 구간만 표시한다
+  function changedRange(a, b) {
+    let p = 0; const n = Math.min(a.length, b.length);
+    while (p < n && a[p] === b[p]) p++;
+    let s = 0;
+    while (s < n - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+    const shorter = Math.min(a.trim().length, b.trim().length);
+    if (shorter === 0 || (p + s) < shorter * 0.35) return [null, null];
+    const ra = [p, a.length - s], rb = [p, b.length - s];
+    return [ra[1] > ra[0] ? ra : null, rb[1] > rb[0] ? rb : null];
+  }
+  const langOf = (path) => path.endsWith(".swift") ? "swift" : (path.endsWith(".pbxproj") || path.endsWith(".json")) ? "strings" : "plain";
+
+  // ---------- Diff rendering ----------
+  function hunkRows(file, hunk) {
+    const lang = langOf(file.path);
+    const rows = [];
+    const noise = hunk.noise ? " noise-row" : "";
+    rows.push(`<tr class="hunk${noise}"><td class="ln"></td><td class="ln"></td><td>${esc(hunk.header)}</td></tr>`);
+    let o = hunk.oldStart, n = hunk.newStart;
+    const lines = hunk.lines;
+    for (let i = 0; i < lines.length; ) {
+      const [t, text] = lines[i];
+      if (t === "!") {
+        rows.push(`<tr class="hunk"><td colspan="3">${esc(text)}</td></tr>`);
+        i++; continue;
+      }
+      if (t === " ") {
+        rows.push(`<tr class="ctx${noise}"><td class="ln">${o}</td><td class="ln">${n}</td><td class="code"><span class="sg"> </span>${render(text, lang)}</td></tr>`);
+        o++; n++; i++; continue;
+      }
+      const dels = [], adds = [];
+      while (i < lines.length && lines[i][0] === "-") dels.push(lines[i++][1]);
+      while (i < lines.length && lines[i][0] === "+") adds.push(lines[i++][1]);
+      const marks = dels.map(() => null), marksAdd = adds.map(() => null);
+      if (dels.length === adds.length) dels.forEach((d, k) => { const [ra, rb] = changedRange(d, adds[k]); marks[k] = ra; marksAdd[k] = rb; });
+      dels.forEach((d, k) => rows.push(`<tr class="del${noise}"><td class="ln">${o++}</td><td class="ln"></td><td class="code"><span class="sg">−</span>${render(d, lang, marks[k])}</td></tr>`));
+      adds.forEach((a, k) => rows.push(`<tr class="add${noise}"><td class="ln"></td><td class="ln">${n++}</td><td class="code"><span class="sg">+</span>${render(a, lang, marksAdd[k])}</td></tr>`));
+    }
+    return rows.join("");
+  }
+  function bar(add, del) {
+    const total = add + del; if (!total) return "";
+    const p = Math.round((add / total) * 5);
+    return `<span class="bar">${Array.from({ length: 5 }, (_, i) => `<i class="${i < p ? "p" : "m"}"></i>`).join("")}</span>`;
+  }
+  function pathHTML(file) {
+    const i = file.path.lastIndexOf("/");
+    const dir = i >= 0 ? file.path.slice(0, i + 1) : "";
+    const from = file.status === "R" && file.oldPath ? `<span class="from">← ${esc(file.oldPath)}</span>` : "";
+    return `<span class="dir">${esc(dir).replace(/\//g, "/<wbr>")}</span><span class="name">${esc(file.path.slice(i + 1))}</span>${from}`;
+  }
+  const PILL = { A: "fix", A2: "test" };
+  function groupPills(path) {
+    return groupsOf(path).map((g) => `<span class="pill ${($$("[data-group]").find((el) => el.dataset.group === g)?.dataset.kind) || PILL[g] || "neutral"}">${esc(g)}</span>`).join("");
+  }
+  function diffCard(file, opts = {}) {
+    const hunks = opts.hunks || file.hunks;
+    const collapsed = opts.collapsed ?? false;
+    const note = opts.note ?? noteFor(file.path).note;
+    const meaningful = hunks.filter((h) => !h.noise);
+    const noiseCount = hunks.length - meaningful.length;
+    let body;
+    if (file.binary) body = `<div class="empty">바이너리/비 UTF-8 파일 · ${file.oldSize} → ${file.newSize} bytes</div>`;
+    else if (!hunks.length) body = `<div class="empty">${file.oldMode !== file.newMode ? "파일 mode/type 변경" : file.status === "A" ? "빈 파일 추가" : file.status === "D" ? "빈 파일 삭제" : "텍스트 hunk 없음"}</div>`;
+    else {
+      const rows = hunks.map((h) => hunkRows(file, h)).join("");
+      const fold = noiseCount && !opts.focus ? `<tr class="fold"><td colspan="3">파일 헤더 주석 변경 ${noiseCount}곳 숨김 · 눌러서 보기</td></tr>` : "";
+      body = meaningful.length || opts.focus ? `<table class="d">${fold}${rows}</table>` : `<table class="d"><tr class="fold"><td colspan="3">${file.status === "R" ? "내용은 그대로, 파일 헤더 주석만 바뀜" : "파일 헤더 주석만 바뀜"} · 눌러서 보기</td></tr>${rows}</table>`;
+    }
+    const el = document.createElement("div");
+    el.className = "diff";
+    el.dataset.path = file.path;
+    el.dataset.collapsed = String(collapsed);
+    el.innerHTML = `
+      <div class="diff-head">
+        <button class="chev" type="button" aria-label="접기/펼치기"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <span class="status ${file.status}" title="${({ M: "수정", A: "신규", D: "삭제", R: "이동" })[file.status]}">${file.status}</span>
+        <span class="path">${opts.title ? `<span class="name">${esc(opts.title)}</span> <span class="dir">· ${esc(file.path.split("/").pop())}</span>` : pathHTML(file)}</span>
+        <span class="tags">${groupPills(file.path)}</span>
+        <span class="count"><span class="p">+${file.add}</span> <span class="m">−${file.del}</span>${bar(file.add, file.del)}</span>
+      </div>
+      ${note && !opts.title ? `<div class="diff-note">${note}</div>` : ""}
+      ${file.oldMode !== file.newMode ? `<div class="diff-note mono">mode: ${esc(file.oldMode || "없음")} → ${esc(file.newMode || "없음")}</div>` : ""}
+      <div class="diff-body">${body}</div>
+      <button class="more" type="button"></button>`;
+    const lineCount = hunks.reduce((n, h) => n + h.lines.length + 1, 0);
+    if (opts.focus && lineCount > 26) {
+      el.classList.add("clamp");
+      const more = el.querySelector(".more");
+      more.textContent = `전체 보기 · ${lineCount}줄`;
+      more.addEventListener("click", () => el.classList.remove("clamp"));
+    }
+    el.querySelector(".chev").addEventListener("click", () => { el.dataset.collapsed = String(el.dataset.collapsed !== "true"); });
+    el.querySelector(".diff-head").addEventListener("dblclick", () => { el.dataset.collapsed = String(el.dataset.collapsed !== "true"); });
+    el.querySelectorAll("tr.fold").forEach((tr) => tr.addEventListener("click", () => { el.classList.add("show-noise"); tr.remove(); }));
+    return el;
+  }
+
+  // ---------- Commit pages ----------
+  const COMMITS = DATA.commits || [];
+  const KIND = { fix: "Fix", refactor: "Refactor", test: "Test", feat: "Feat", chore: "Chore", docs: "Docs" };
+  const shortTitle = (t) => t.replace(/^\[[^\]]+\]\s*#\d+\s*-\s*/, "");
+  const sumOf = (files) => files.reduce((a, f) => ({ add: a.add + f.add, del: a.del + f.del }), { add: 0, del: 0 });
+  const LEVEL = { high: "높음", medium: "중간", low: "낮음" };
+  // commits.json의 risk·impact·verify·revert와, 같은 파일을 먼저 고친 커밋(자동)을 머리말에 표로 보여 준다
+  const commitMeta = (c) => {
+    const paths = new Set(c.files.flatMap((f) => [f.path, f.oldPath].filter(Boolean)));
+    const overlap = COMMITS.filter((p) => p.n < c.n && p.files.some((f) => paths.has(f.path) || paths.has(f.oldPath)));
+    const rows = [];
+    if (c.risk) rows.push(["위험도", `<span class="lv ${c.risk.level}">${LEVEL[c.risk.level] || c.risk.level}</span> ${c.risk.note || ""}`]);
+    if (c.impact) rows.push(["사용자 영향", c.impact]);
+    if (c.verify) rows.push(["이 커밋의 검증", c.verify]);
+    if (c.review) rows.push(["교차 검증 반영", c.review]);
+    rows.push(["먼저 들어가야 할 커밋", [c.requires, overlap.length ? `같은 파일을 고친 커밋: ${overlap.map((p) => `<a href="#c${p.n}">${p.n}</a>`).join(", ")}` : ""].filter(Boolean).join("<br>") || "의존성 미검증 (파일 중복만 자동 확인)"]);
+    if (c.revert) rows.push(["되돌릴 때", c.revert]);
+    return `<dl class="commit-meta">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>`;
+  };
+  const main = $("#main");
+  COMMITS.forEach((c) => {
+    let page = $(`.tab-page[data-commit="${c.n}"]`);
+    if (!page) { page = document.createElement("div"); page.className = "tab-page"; page.dataset.commit = c.n; main.insertBefore(page, $(".tab-page[data-tab]:not([data-tab='overview'])")); }
+    page.dataset.tab = "c" + c.n;
+    page.dataset.label = shortTitle(c.title);
+    const s = sumOf(c.files);
+    const [, ...bodyLines] = c.message.split("\n");
+    const head = document.createElement("header");
+    head.className = "commit-head";
+    head.innerHTML = `
+      <div class="eyebrow"><span class="issue">커밋 ${c.n} / ${COMMITS.length}</span><span class="pill ${c.kind}">${KIND[c.kind] || c.kind}</span>${c.group ? `<span class="pill neutral">${esc(c.group)}</span>` : ""}<span class="count mono"><span class="p">+${s.add}</span> <span class="m">−${s.del}</span> · 파일 ${c.files.length}개</span></div>
+      <h1>${esc(shortTitle(c.title))}</h1>${commitMeta(c)}
+      <div class="card msg-card"><div class="msg-bar"><span>커밋 메시지</span><button class="btn" type="button" data-copy="${esc(c.message)}">전문 복사</button></div><pre class="msg-full"><b>${esc(c.title)}</b>\n${esc(bodyLines.join("\n"))}</pre></div>`;
+    page.prepend(head);
+    const diffSec = document.createElement("section");
+    diffSec.id = `c${c.n}-diff`;
+    diffSec.dataset.toc = "이 커밋의 diff";
+    diffSec.innerHTML = `<header><h2><span class="idx"></span>이 커밋의 diff</h2><p class="lede">이 커밋에서 바뀐 파일 ${c.files.length}개. 권한·타입 변경과 모든 주석 변경을 포함합니다.</p></header><div class="commit-diff stack"></div>`;
+    page.append(diffSec);
+    const prev = COMMITS[c.n - 2], next = COMMITS[c.n];
+    const nav = document.createElement("nav");
+    nav.className = "pager";
+    nav.innerHTML = `${prev ? `<a class="card" href="#c${prev.n}"><span class="small muted">← 이전 커밋 ${prev.n}</span><b>${esc(shortTitle(prev.title))}</b></a>` : `<a class="card" href="#overview"><span class="small muted">← 개요</span><b>개요로 돌아가기</b></a>`}${next ? `<a class="card next" href="#c${next.n}"><span class="small muted">다음 커밋 ${next.n} →</span><b>${esc(shortTitle(next.title))}</b></a>` : ""}`;
+    page.append(nav);
+  });
+
+  // 개요의 커밋 목록
+  const map = $("#commit-map");
+  if (map) {
+    map.className = "commits";
+    map.innerHTML = COMMITS.map((c) => {
+      const s = sumOf(c.files);
+      const summary = $(`.tab-page[data-commit="${c.n}"]`)?.dataset.summary || "";
+      return `<li><span class="dot">${c.n}</span><a class="card body commit-link" href="#c${c.n}"><div class="row"><span class="pill ${c.kind}">${KIND[c.kind] || c.kind}</span><b>${esc(shortTitle(c.title))}</b></div>${summary ? `<p class="small muted">${esc(summary)}</p>` : ""}<div class="row small muted mono"><span class="p">+${s.add}</span><span class="m">−${s.del}</span><span>· 파일 ${c.files.length}개</span>${c.risk ? `<span class="lv ${c.risk.level}">위험 ${LEVEL[c.risk.level] || c.risk.level}</span>` : ""}<span class="go">자세히 →</span></div></a></li>`;
+    }).join("");
+  }
+
+  // <div class="diff-embed" data-file="X.swift" data-match="regex" | data-hunks="2,3" data-title="..."></div>
+  // 커밋 페이지 안에서는 그 커밋의 diff에서 찾는다
+  $$(".diff-embed").forEach((host) => {
+    try {
+      const n = host.closest("[data-commit]")?.dataset.commit;
+      const commit = n ? COMMITS.find((c) => String(c.n) === n) : null;
+      if (n && !commit) throw new Error(`계획에 없는 커밋: ${n}`);
+      const pool = commit ? commit.files : DATA.files;
+      const sel = host.dataset.file;
+      if (!sel) throw new Error("data-file 누락");
+      const exact = pool.filter((f) => f.path === sel);
+      const matches = exact.length ? exact : pool.filter((f) => f.path.endsWith("/" + sel));
+      if (matches.length !== 1) throw new Error(`diff 경로가 없거나 모호함: ${sel} (${matches.length}건)`);
+      const file = matches[0];
+      let hunks = file.hunks;
+      if (host.dataset.hunks !== undefined && host.dataset.match !== undefined) throw new Error("hunks와 match는 하나만 사용");
+      if (host.dataset.hunks !== undefined) {
+        if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(host.dataset.hunks)) throw new Error("hunk 번호 형식 오류");
+        const idx = host.dataset.hunks.split(",").map(Number);
+        if (idx.some((i) => i > hunks.length) || new Set(idx).size !== idx.length) throw new Error("hunk 번호 범위/중복 오류");
+        hunks = hunks.filter((_, i) => idx.includes(i + 1));
+      } else if (host.dataset.match !== undefined) {
+        const re = new RegExp(host.dataset.match);
+        hunks = hunks.filter((h) => h.lines.some(([t, s]) => (t === "+" || t === "-") && re.test(s)));
+      }
+      if (!hunks.length && (host.dataset.hunks !== undefined || host.dataset.match !== undefined)) throw new Error(`매칭 hunk 없음: ${sel}`);
+      host.replaceWith(diffCard(file, { hunks, focus: true, title: host.dataset.title, note: "" }));
+    } catch (error) { reportError(error.message, host); }
+  });
+
+  // ---------- File browser ----------
+  let browserSeq = 0;
+  function makeBrowser(host, sourceFiles, opts = {}) {
+    const files = sourceFiles.slice().sort((a, b) => a.path.localeCompare(b.path));
+    const ns = "b" + (browserSeq++) + "-";
+    const list = document.createElement("div"); list.className = "file-list";
+    const tree = document.createElement("nav"); tree.className = "tree card"; tree.setAttribute("aria-label", "변경 파일");
+    let lastDir = null;
+    files.forEach((f, i) => {
+      const id = ns + i;
+      const card = diffCard(f, { collapsed: !opts.open }); card.id = id; list.append(card);
+      const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ".";
+      if (dir !== lastDir) { const d = document.createElement("div"); d.className = "dir"; d.innerHTML = esc(dir + "/").replace(/\//g, "/<wbr>"); d.dataset.dir = dir; tree.append(d); lastDir = dir; }
+      const a = document.createElement("a"); a.href = "#" + id; a.dataset.path = f.path; a.dataset.idx = i;
+      a.innerHTML = `<span class="status ${f.status}">${f.status}</span><span class="nm">${esc(f.path.split("/").pop())}</span><span class="ct mono">+${f.add} −${f.del}</span>`;
+      a.addEventListener("click", (e) => { e.preventDefault(); card.dataset.collapsed = "false"; card.scrollIntoView({ block: "start" }); });
+      tree.append(a);
+    });
+    const bar = document.createElement("div"); bar.className = "toolbar";
+    const groupBtns = opts.groups ? [...new Set(COMMITS.map((c) => c.n))].map((n) => `<button class="btn" data-f="${n}" aria-pressed="false">커밋 ${n}</button>`).join("") : "";
+    bar.innerHTML = `<input type="search" placeholder="파일 경로 검색" aria-label="파일 경로 검색">
+      ${opts.groups ? `<button class="btn" data-f="*" aria-pressed="true">전체 ${files.length}</button>${groupBtns}<span class="sep"></span>` : ""}
+      <button class="btn" data-act="open">모두 펼치기</button><button class="btn" data-act="close">모두 접기</button>`;
+    let filter = "*", query = "";
+    const inCommit = (f, n) => COMMITS[n - 1].files.some((x) => x.path === f.path);
+    function apply() {
+      files.forEach((f, i) => {
+        const ok = (filter === "*" || inCommit(f, +filter)) && f.path.toLowerCase().includes(query);
+        $("#" + ns + i).classList.toggle("hidden", !ok);
+        tree.querySelector(`a[data-idx="${i}"]`).classList.toggle("hidden", !ok);
+      });
+      $$(".dir", tree).forEach((d) => { d.style.display = $$("a:not(.hidden)", tree).some((a) => a.dataset.path.slice(0, a.dataset.path.lastIndexOf("/")) === d.dataset.dir) ? "" : "none"; });
+    }
+    bar.addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      if (b.dataset.f) { filter = b.dataset.f; $$("[data-f]", bar).forEach((x) => x.setAttribute("aria-pressed", String(x === b))); apply(); }
+      if (b.dataset.act) $$(".diff:not(.hidden)", list).forEach((c) => { c.dataset.collapsed = String(b.dataset.act === "close"); });
+    });
+    bar.querySelector("input").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); apply(); });
+    const wrap = document.createElement("div"); wrap.className = "browser";
+    wrap.append(tree, list);
+    host.append(bar, wrap);
+  }
+  const allBrowser = $("#file-browser");
+  if (allBrowser) makeBrowser(allBrowser, DATA.files, { groups: COMMITS.length > 0 });
+  $$(".commit-diff").forEach((host) => {
+    const c = COMMITS[host.closest("[data-commit]").dataset.commit - 1];
+    makeBrowser(host, c.files, { open: c.files.length <= 4 });
+  });
+
+  // ---------- Stats ----------
+  const totals = DATA.files.reduce((acc, f) => { acc.add += f.add; acc.del += f.del; acc[f.status] = (acc[f.status] || 0) + 1; return acc; }, { add: 0, del: 0 });
+  const statText = {
+    files: String(DATA.files.length),
+    commits: String(COMMITS.length),
+    add: "+" + totals.add, del: "−" + totals.del,
+    breakdown: ["M 수정", "A 신규", "R 이동", "D 삭제"].map((s) => totals[s[0]] ? `${s.slice(2)} ${totals[s[0]]}` : null).filter(Boolean).join(" · "),
+  };
+  $$("[data-stat]").forEach((el) => { el.textContent = statText[el.dataset.stat] ?? ""; });
+
+  // ---------- Device checklist ----------
+  $$(".device").forEach((ul) => {
+    const boxes = $$("input[type=checkbox]", ul);
+    const out = document.querySelector(`[data-progress-for="${ul.id}"]`);
+    if (out && !out.querySelector(".fill")) out.innerHTML = `<div class="track"><div class="fill"></div></div><span class="txt"></span>`;
+    const update = () => {
+      const done = boxes.filter((b) => b.checked).length;
+      if (out) { out.querySelector(".fill").style.width = (boxes.length ? (done / boxes.length) * 100 : 0) + "%"; out.querySelector(".txt").textContent = `${done} / ${boxes.length} 확인`; }
+    };
+    boxes.forEach((b, i) => {
+      const id = b.dataset.checkId;
+      if (!id) { b.disabled = true; reportError("체크 항목 data-check-id 누락"); return; }
+      const k = `${REPORT_KEY}:${ul.id}:${id}`;
+      b.checked = store.get(k) === "1";
+      b.addEventListener("change", () => { store.set(k, b.checked ? "1" : "0"); update(); });
+    });
+    update();
+  });
+
+  // ---------- Copy ----------
+  $$("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); const t = b.textContent; b.textContent = "복사됨"; setTimeout(() => (b.textContent = t), 1200); } catch { b.textContent = "복사 실패 · 메시지를 직접 선택하세요"; }
+  }));
+
+  // ---------- Tabs · sidebar ----------
+  const pages = $$(".tab-page");
+  const tocList = $("#toc-list");
+  $("#toc-title").textContent = $(".hero .issue")?.textContent || "";
+  pages.forEach((p) => {
+    $$(":scope > section[id]", p).forEach((s, i) => { const idx = s.querySelector("h2 .idx"); if (idx) idx.textContent = String(i + 1).padStart(2, "0"); });
+    const li = document.createElement("li");
+    const n = p.dataset.commit;
+    li.innerHTML = `<a class="tab-link" href="#${p.dataset.tab}">${n ? `<span class="num">${n}</span>` : ""}<span>${esc(p.dataset.label || p.dataset.tab)}</span></a><ol class="sub"></ol>`;
+    li.dataset.tab = p.dataset.tab;
+    if (n && p.dataset.commit === "1") { const g = document.createElement("li"); g.className = "group-label"; g.textContent = "커밋"; tocList.append(g); }
+    tocList.append(li);
+    const sub = li.querySelector(".sub");
+    $$(":scope > section[id]", p).forEach((s) => {
+      const label = s.dataset.toc || s.querySelector("h2")?.textContent.replace(/^\d+\s*/, "").trim();
+      sub.insertAdjacentHTML("beforeend", `<li><a href="#${s.id}">${esc(label)}</a></li>`);
+    });
+  });
+  function show(tab, target) {
+    pages.forEach((p) => p.classList.toggle("active", p.dataset.tab === tab));
+    $$("#toc-list > li[data-tab]").forEach((li) => li.classList.toggle("active", li.dataset.tab === tab));
+    if (target) target.scrollIntoView({ block: "start" }); else window.scrollTo(0, 0);
+  }
+  function route() {
+    let id;
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch { id = "overview"; }
+    const page = pages.find((p) => p.dataset.tab === id);
+    if (page) return show(id);
+    const el = id ? document.getElementById(id) : null;
+    const owner = el?.closest(".tab-page");
+    if (owner) return show(owner.dataset.tab, el);
+    show(pages[0]?.dataset.tab);
+  }
+  addEventListener("hashchange", route);
+  route();
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      $$("#toc-list .sub a").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#" + e.target.id));
+    });
+  }, { rootMargin: "-10% 0px -80% 0px" });
+  $$(".tab-page > section[id]").forEach((s) => io.observe(s));
+  if (validationErrors.length) {
+    const warning = document.createElement("div");
+    warning.className = "callout"; warning.setAttribute("role", "alert");
+    warning.innerHTML = `<b>보고서 검증 실패 · 승인용으로 사용하지 마세요</b><ul>${validationErrors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`;
+    main.prepend(warning);
+  }
+  window.reviewBriefValidation.ready = true;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<div class="tab-page" data-tab="overview" data-label="결과 개요">
+  <header class="hero" data-placeholder="replace-all-scaffold-instructions">
+    <div class="eyebrow">결과 브리프 · 검토 대기</div>
+    <h1>실제로 수행한 작업의 제목으로 교체</h1>
+    <p class="sub">관측한 결과와 남은 미검증 항목을 요약. 성능 향상·요구 충족을 추정하지 않는다.</p>
+    <dl class="meta"><div><dt>요구 기준</dt><dd>원래 요청 또는 기획 브리프의 경로·버전·합의 기록</dd></div><div><dt>대상</dt><dd>보고서 하단의 기준 SHA·HEAD·보고서 ID와 증거의 대상을 대조</dd></div></dl>
+    <div class="stats"><div class="card stat"><div class="n" data-stat="files"></div><div class="l">변경 파일</div></div><div class="card stat"><div class="n" data-stat="breakdown"></div><div class="l">변경 구성</div></div></div>
+  </header>
+  <section id="changes" data-toc="변경 전 → 변경 후">
+    <header><h2><span class="idx"></span>변경 전 → 변경 후</h2></header>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>요구 ID</th><th>변경 전</th><th>변경 후</th><th>근거·관측 범위</th></tr></thead><tbody>
+      <tr><td>요구 ID로 교체</td><td>확인한 기존 동작/코드</td><td>실제 변경된 동작/코드</td><td>diff 위치와 실행 관측 여부. 전체 diff만으로 런타임 검증을 주장하지 않는다.</td></tr>
+    </tbody></table></div>
+  </section>
+  <section id="requirements" data-toc="요구별 결과">
+    <header><h2><span class="idx"></span>요구별 결과</h2></header>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>요구·완료 기준·출처</th><th>구현 상태</th><th>검증 상태</th><th>증거</th><th>남은 작업</th></tr></thead><tbody>
+      <tr><td>합의한 기준을 그대로 기재</td><td>확인 불가</td><td>미실행</td><td>미기록</td><td>필요한 검증을 구체적으로 기재</td></tr>
+    </tbody></table></div>
+    <p>기준 변경이 있었다면 이전 기준·변경 내용·승인 출처를 기재. 변경이 없으면 확인한 범위를 기록한다.</p>
+  </section>
+  <section id="review-focus" data-toc="필수 리뷰 지점">
+    <header><h2><span class="idx"></span>리뷰어가 확인할 부분</h2></header>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>ID·요구</th><th>필수/제안·근거</th><th>변경 지점</th><th>확인 질문·판정 기준</th><th>현재 검증·남은 판단</th></tr></thead><tbody>
+      <tr><td>항목 ID로 교체</td><td>합의한 완료 기준·저장소 규칙·명시적 리뷰 요청. 에이전트 제안은 제안으로 표시</td><td>해당 diff로 연결</td><td>어떤 분기에서 어떤 결과여야 하는지</td><td>미검토. 실제 기록이 생길 때만 갱신</td></tr>
+    </tbody></table></div>
+  </section>
+  <section id="verification" data-toc="검증·측정 결과">
+    <header><h2><span class="idx"></span>실행한 검증과 측정</h2></header>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>검증 대상·기준</th><th>명령·조작</th><th>환경·revision·시각</th><th>실제 결과</th><th>증거·한계</th></tr></thead><tbody>
+      <tr><td>검증 항목</td><td>미실행</td><td>미기록</td><td>미확인</td><td>실행 전에는 통과로 표시하지 않는다.</td></tr>
+    </tbody></table></div>
+    <div class="card"><h3>성능·수치</h3><p>미측정. 실제 측정했다면 지표·단위·전후값·장치·빌드 설정·입력 크기·횟수·집계 방법·원본 로그를 기재. 비교 조건이 다르면 한계를 명시한다.</p></div>
+    <div class="card"><h3>리뷰 이력</h3><p>미기록. 실제 검토자·모델 ID(확인 가능한 경우)·시각·대상·판정을 기재. 자기 검토와 독립 리뷰를 구분한다.</p></div>
+  </section>
+  <section id="merge-checklist" data-toc="머지 체크리스트">
+    <header><h2><span class="idx"></span>머지 조건과 남은 확인</h2></header>
+    <p>아래는 검토 상태 기록이다. 개인 체크박스나 테스트 성공은 사람의 승인 기록이 아니다. 실제 적용되는 조건만 남긴다.</p>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>조건 ID·내용</th><th>필수/제안·출처</th><th>상태</th><th>증거·남은 작업</th><th>검토자·시각</th></tr></thead><tbody>
+      <tr data-check-kind="criterion" data-verdict="unknown" data-basis="replace-with-agreed-criterion"><td>조건으로 교체</td><td>출처로 교체</td><td>미확인</td><td>검증 미실행</td><td>미기록</td></tr>
+      <tr data-check-kind="human" data-verdict="unknown" data-basis="replace-with-required-review-rule"><td>필수 리뷰 완료 여부</td><td>해당 규칙이 있을 때만 유지</td><td>미확인</td><td>실제 검토 기록 필요</td><td>미기록</td></tr>
+    </tbody></table></div>
+    <p>모든 판정 행에 data-check-kind·data-verdict·data-basis 필요. 충족은 data-evidence, 해당 없음은 data-reason 필요. 사람의 검토 충족에는 data-actor와 data-time도 필요하다. 본문에도 근거를 보이게 쓴다.</p>
+  </section>
+  <section id="follow-up" data-toc="미수행·사용자 확인">
+    <header><h2><span class="idx"></span>미수행 · 사용자 확인</h2></header>
+    <div class="card"><dl class="steps"><dt>요구 ID·필수 근거</dt><dd>실제 완료 기준으로 교체</dd><dt>환경·준비</dt><dd>장치·OS·빌드·데이터·초기 상태</dd><dt>조작</dt><dd>재현 가능한 순서</dd><dt>기대 결과</dt><dd>관측할 결과</dd><dt>실패 조건</dt><dd>어떤 관측이면 실패인지</dd><dt>남길 증거</dt><dd>로그·화면·수행자·시각</dd></dl></div>
+    <p>해당하는 수동 검증이 없으면 이유를 기재하거나 이 선택 섹션을 제거한다. 수행 결과와 미래 제안을 섞지 않는다.</p>
+  </section>
+</div>
+<div class="tab-page" data-tab="all" data-label="전체 변경">
+  <section id="all-files" data-toc="전체 diff"><header><h2><span class="idx"></span>실제 변경 근거</h2></header><div id="file-browser"></div></section>
+</div>

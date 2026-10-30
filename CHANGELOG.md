@@ -6,6 +6,19 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-31
+
+### Added
+
+- Claude skill `plan-brief`
+- Claude skill `result-brief`
+- Codex skill `plan-brief`
+- Codex skill `result-brief`
+
+### Changed
+
+- `README.md`
+
 ## [1.0.1] - 2026-10-27
 
 ### Added
