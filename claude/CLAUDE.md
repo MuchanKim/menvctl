@@ -41,7 +41,9 @@ More specific project instructions take precedence.
 | 버그 원인을 모를 때 | `/investigate` |
 | 위험한 작업이나 수정 범위를 제한할 때 | `/careful`, `/freeze`, `/guard` |
 | 작업을 끝내거나 이어갈 때 | `/context-save`, `/context-restore` |
+| 구현, 유지보수, 리팩터링 중 엄밀함이 필요한 작업 | `/pstack:poteto-mode` |
 
+- 역할 분담: 기획·제품 방향은 gstack, 구현·유지보수·리팩터링은 pstack, 리뷰는 `/codex review`. 구현 단계에서는 gstack 대신 pstack을 우선 제안한다.
 - 한 줄 수정이나 단순한 질문에는 스킬을 제안하지 않는다.
 - 같은 대화에서 거절한 스킬은 다시 제안하지 않는다.
 - 프로젝트 CLAUDE.md에 gstack "Skill routing" 섹션을 추가하자는 제안은 하지 않는다.

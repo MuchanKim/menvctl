@@ -6,6 +6,17 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-01
+
+### Added
+
+- Claude plugin `pstack@cursor-plugins`
+
+### Changed
+
+- `.gitignore`
+- `claude/CLAUDE.md`
+
 ## [1.1.0] - 2026-10-31
 
 ### Added
