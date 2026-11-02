@@ -19,13 +19,14 @@ import stat
 import subprocess
 import sys
 import tempfile
+from urllib.parse import quote
 
 TEMPLATE = Path(__file__).resolve().parent.parent / 'assets' / 'template.html'
 MODES = {'100644', '100755', '120000'}
 KINDS = {'fix', 'refactor', 'test', 'feat', 'chore', 'docs'}
 SECTIONS = {
     'planning': {'requirements', 'scenarios', 'acceptance', 'decisions'},
-    'result': {'changes', 'metrics', 'impact', 'requirements', 'review-focus', 'verification',
+    'result': {'changes', 'behavior', 'metrics', 'impact', 'requirements', 'review-focus', 'verification',
                'merge-checklist', 'follow-up'},
 }
 VERIFIERS = {'script', 'implementer', 'independent', 'human', 'none'}
@@ -226,6 +227,8 @@ class BodyCheck(HTMLParser):
         self.summary = False
         self.stats = []
         self.stack = []
+        # 커밋 탭별 What 표 글자, 다이어그램 수, 다이어그램 생략 사유
+        self.what, self.diagrams, self.diagram_na = {}, {}, {}
         self.reserved = set(re.findall(r'id="([^"{}]+)"', TEMPLATE.read_text(encoding="utf-8")))
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -247,8 +250,13 @@ class BodyCheck(HTMLParser):
         if tag == 'p' and 'sub' in a.get('class', '').split(): self.summary = True
         if tag == 'img' and a.get('src', '').startswith('data:'): self.images += 1
         if 'data-screenshot-na' in a: self.screenshot_na = bool(a['data-screenshot-na'].strip())
+        commit = a.get('data-commit') or self.commit()
+        if commit is not None:
+            if tag == 'table' and 'what' in a.get('class', '').split(): self.what.setdefault(commit, '')
+            if tag == 'svg' and not any(x[0] == 'svg' for x in self.stack): self.diagrams[commit] = self.diagrams.get(commit, 0) + 1
+            if a.get('data-diagram-na', '').strip(): self.diagram_na[commit] = True
         if tag not in ('area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'):
-            self.stack.append((tag, a.get('id')))
+            self.stack.append((tag, a.get('id'), a))
 
         if tag == 'a' and a.get('href', '').startswith('#'):
             self.links.append(a['href'][1:])
@@ -283,6 +291,14 @@ class BodyCheck(HTMLParser):
             url = a.get('src') or a.get('href')
             if url and not url.startswith('data:'): self.issues.append(f'외부 리소스 금지: {tag}')
 
+    def commit(self):
+        return next((x[2]['data-commit'] for x in reversed(self.stack) if x[2].get('data-commit') is not None), None)
+
+    def handle_data(self, data):
+        commit = self.commit()
+        if commit is not None and any(x[0] == 'table' and 'what' in x[2].get('class', '').split() for x in self.stack):
+            self.what[commit] = self.what.get(commit, '') + data
+
     def handle_endtag(self, tag):
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i][0] == tag:
@@ -299,6 +315,48 @@ def repo_file(entry):
     return entry.get('repoPath', entry['path'])
 
 
+def github_url():
+    remote = git('remote', 'get-url', 'origin', allowed=(0, 2, 128)).decode().strip()
+    m = re.fullmatch(r'(?:git@github\.com:|(?:https|ssh)://(?:git@)?github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?', remote)
+    return f'https://github.com/{m[1]}' if m else None
+
+
+def git_ref(text):
+    """`<code>` 안 글자가 커밋이나 push된 브랜치면 (종류, 이름)을 돌려준다."""
+    if re.fullmatch(r'[0-9a-f]{7,40}', text):
+        sha = git('rev-parse', '--verify', '--quiet', '--end-of-options', text + '^{commit}', allowed=(0, 1, 128)).decode().strip()
+        return ('commit', sha) if sha else None
+    if re.fullmatch(r'[\w./#-]+', text) and subprocess.run(
+            ['git', 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{text}']).returncode == 0:
+        return ('tree', text)
+    return None
+
+
+ISSUE_RE = re.compile(r'(?<![\w&/#])#(\d+)\b')
+
+
+def link_refs(content, url):
+    """작성자가 텍스트로 쓴 #이슈, 커밋 SHA, 브랜치를 GitHub 링크로 바꾼다. a·pre·script·style·svg 안은 두지 않는다."""
+    if not url: return content
+    parts, out, skip, i = re.split(r'(<[^>]*>)', content), [], 0, 0
+    while i < len(parts):
+        part = parts[i]
+        m = re.match(r'<(/?)(a|pre|script|style|svg|textarea)\b', part, re.I)
+        if m and not part.endswith('/>'):
+            skip = max(0, skip + (-1 if m[1] else 1))
+        elif not skip and re.fullmatch(r'<code>', part) and i + 2 < len(parts) and parts[i + 2] == '</code>':
+            ref = git_ref(html.unescape(parts[i + 1]))
+            if ref:
+                kind, name = ref
+                href = f'{url}/{kind}/' + '/'.join(quote(s, safe='') for s in name.split('/'))
+                out.append(f'<a href="{html.escape(href)}"><code>{parts[i + 1]}</code></a>')
+                i += 3; continue
+        elif not skip and not part.startswith('<'):
+            part = ISSUE_RE.sub(lambda r: f'<a href="{url}/issues/{r[1]}">#{r[1]}</a>', part)
+        out.append(part); i += 1
+    return ''.join(out)
+
+
 def check_body(content, commits, issues, mode='result', files=()):
     check = BodyCheck(); check.feed(content)
     issues.extend(check.issues)
@@ -307,6 +365,15 @@ def check_body(content, commits, issues, mode='result', files=()):
         if 'auto-facts' in check.ids: issues.append('auto-facts는 자동 기록용 id임')
         if any(UI_PATH_RE.search(repo_file(f)) for f in files) and not (check.images or check.screenshot_na):
             issues.append('UI 변경에 스크린샷 필요 (사유가 있으면 data-screenshot-na)')
+        for c in commits:
+            n = str(c['n'])
+            if n not in check.what:
+                issues.append(f'커밋 {n} 탭에 What 표(table.what) 필요')
+                continue
+            for f in c['files']:
+                if f['path'] not in check.what[n]: issues.append(f'커밋 {n} What 표에 변경 파일 없음: {f["path"]}')
+            if not (check.diagrams.get(n) or check.diagram_na.get(n)):
+                issues.append(f'커밋 {n} 탭에 다이어그램(svg) 필요 (사유가 있으면 data-diagram-na)')
     if 'overview' not in check.tabs: issues.append('overview 탭 필요')
     for section in sorted(SECTIONS[mode] - check.ids): issues.append(f'{mode} 필수 섹션 누락: {section}')
     if mode == 'result':
@@ -543,7 +610,7 @@ def main(mode):
         evidence = '\n'.join(p.read_text(encoding='utf-8') for p in (verify_path, review_path) if p)
         if verify: evidence += '\n' + json.dumps(verify['earlier'], ensure_ascii=False)
         reject_sensitive(('증거 파일', name) for _, name in sensitive_findings([], [], evidence))
-        content = with_automatic_section(content, automatic_section(files, verify, review))
+        content = with_automatic_section(link_refs(content, github_url()), automatic_section(files, verify, review))
     if issues and not args.draft: raise ValueError('\n'.join(issues))
     title_match = re.search(r'<h1[^>]*>(.*?)</h1>', content, re.S)
     title = args.title or (re.sub(r'<[^>]+>', '', title_match[1]).strip() if title_match else '작업 보고서')

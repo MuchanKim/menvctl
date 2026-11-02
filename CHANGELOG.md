@@ -6,6 +6,28 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-02
+
+### Changed
+
+- `result-brief`: every commit in the plan needs a body tab with a What table
+  broken down by file › type › function, and at least one diagram (sequence,
+  object/type or state) or `data-diagram-na` with a reason. The build fails
+  without them.
+- `result-brief`: new required overview section `behavior` (동작과 사용법):
+  flow diagram, outcomes, usage and real output.
+- `result-brief`, `plan-brief`: diagram styles in the template (`svg.dg`,
+  box states new/changed/removed/test/warn, legend) that follow light and
+  dark themes.
+- `result-brief`: issue numbers, commit SHAs and pushed branches written as
+  text become GitHub links when `origin` is on GitHub.
+
+### Fixed
+
+- Release sandbox check: it no longer fails once a real release is newer than
+  v1.3.0. The sandbox drops the real release sections from its CHANGELOG copy
+  before simulating its own versions.
+
 ## [1.3.0] - 2026-11-02
 
 ### Changed

@@ -15,6 +15,17 @@ RESULT_SECTIONS = ''.join(f'<section id="{name}">Recorded scope: fixture</sectio
 BODY = RESULT_SECTIONS + '<div class="tab-page" data-tab="overview"><h1>Regression</h1></div><div class="tab-page" data-tab="all"><div id="file-browser"></div></div>'
 
 
+def commit_tabs(plan, diagram=True, skip=()):
+    tabs = []
+    for n, c in enumerate(plan['commits'], 1):
+        files = c.get('files') if isinstance(c, dict) and isinstance(c.get('files'), list) else []
+        paths = [f if isinstance(f, str) else str(f.get('path', '')) for f in files if isinstance(f, (str, dict))]
+        rows = ''.join(f'<tr><td><code>{p}</code></td><td>변경</td><td>R1</td><td></td></tr>' for p in paths if p not in skip)
+        figure = '<svg class="dg" viewBox="0 0 10 10"><rect class="box"/></svg>' if diagram else ''
+        tabs.append(f'<div class="tab-page" data-commit="{n}"><table class="grid what"><tbody>{rows}</tbody></table>{figure}</div>')
+    return ''.join(tabs)
+
+
 class BuilderTests(unittest.TestCase):
     def setUp(self):
         self.cwd = Path.cwd()
@@ -47,7 +58,7 @@ class BuilderTests(unittest.TestCase):
         except ValueError:
             return None
         return self.plan(changed) if changed else None
-    def run_cli(self, plan=None, *extra, auto_plan=True):
+    def run_cli(self, plan=None, *extra, auto_plan=True, auto_tabs=True):
         extra = list(extra)
         script = SCRIPT
         if '--mode' in extra:
@@ -59,6 +70,10 @@ class BuilderTests(unittest.TestCase):
             plan = self.changed_plan(extra)
         if plan is not None:
             self.plan_path.write_text(json.dumps(plan)); cmd += ['--plan', str(self.plan_path)]
+            # 커밋 탭 규칙이 다른 실패 사유를 가리지 않도록, 탭을 쓰지 않은 본문에는 최소 탭을 채운다.
+            body = self.body.read_text()
+            if auto_tabs and 'data-commit' not in body and isinstance(plan, dict) and isinstance(plan.get('commits'), list):
+                self.body.write_text(body + commit_tabs(plan))
         return subprocess.run(cmd + list(extra), capture_output=True, text=True)
     def payload(self):
         import re
@@ -446,5 +461,41 @@ class BuilderTests(unittest.TestCase):
         self.write('untracked', b'x\n'); status = self.g('status', '--porcelain')
         b.working_tree_id()
         self.assertEqual(status, self.g('status', '--porcelain'))
+
+    def test_commit_needs_tab_with_what_table(self):
+        self.write('seed', b'new\n')
+        r = self.run_cli(auto_tabs=False)
+        self.assertEqual(r.returncode, 2); self.assertIn('커밋 1 탭에 What 표', r.stderr)
+    def test_what_table_must_name_every_changed_file(self):
+        self.write('seed', b'new\n'); self.write('src/A.swift', b'struct A {}\n')
+        plan = self.plan(['seed', 'src/A.swift'])
+        self.body.write_text(BODY + commit_tabs(plan, skip=('src/A.swift',)))
+        r = self.run_cli(plan)
+        self.assertEqual(r.returncode, 2); self.assertIn('What 표에 변경 파일 없음: src/A.swift', r.stderr)
+        self.assertNotIn('변경 파일 없음: seed', r.stderr)
+    def test_commit_needs_diagram_or_reason(self):
+        self.write('seed', b'new\n'); plan = self.plan(['seed'])
+        self.body.write_text(BODY + commit_tabs(plan, diagram=False))
+        r = self.run_cli(plan)
+        self.assertEqual(r.returncode, 2); self.assertIn('다이어그램', r.stderr)
+        self.body.write_text(BODY + commit_tabs(plan, diagram=False).replace('</table>', '</table><p data-diagram-na="상수만 변경">사유</p>'))
+        r = self.run_cli(plan); self.assertEqual(r.returncode, 0, r.stderr)
+    def test_text_references_become_github_links(self):
+        self.g('remote', 'add', 'origin', 'git@github.com:owner/repo.git')
+        sha = self.g('rev-parse', 'HEAD').decode().strip()
+        self.g('update-ref', 'refs/remotes/origin/fix/#9-x', sha)
+        body = BODY.replace('<h1>Regression</h1>', f'<h1>Regression</h1><p>이슈 #12, <code>{sha[:7]}</code>, <code>fix/#9-x</code>, <code>abcdef1</code>, <a href="#all">#13</a></p><pre>#14</pre>')
+        self.body.write_text(body)
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+        out = self.out.read_text()
+        self.assertIn('<a href="https://github.com/owner/repo/issues/12">#12</a>', out)
+        self.assertIn(f'<a href="https://github.com/owner/repo/commit/{sha}"><code>{sha[:7]}</code></a>', out)
+        self.assertIn('<a href="https://github.com/owner/repo/tree/fix/%239-x"><code>fix/#9-x</code></a>', out)
+        self.assertIn('<code>abcdef1</code>,', out)
+        self.assertIn('<a href="#all">#13</a>', out); self.assertIn('<pre>#14</pre>', out)
+    def test_no_github_remote_leaves_text(self):
+        self.body.write_text(BODY.replace('<h1>Regression</h1>', '<h1>Regression</h1><p>이슈 #12</p>'))
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('<p>이슈 #12</p>', self.out.read_text())
 
 if __name__ == '__main__': unittest.main()

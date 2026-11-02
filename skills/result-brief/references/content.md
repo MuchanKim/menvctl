@@ -8,7 +8,15 @@ If no planning brief exists, recover requirements from the actual user request o
 
 ## Result brief
 
-Order: automatic facts → before/after → metrics → impact → requirement results → mandatory review points → performed verification/measurements → merge conditions → device test items. Commit tabs and the all-files tab follow. Required IDs: `changes`, `metrics`, `impact`, `requirements`, `review-focus`, `verification`, `merge-checklist`, `follow-up`.
+Order: automatic facts → before/after → behavior and usage → metrics → impact → requirement results → mandatory review points → performed verification/measurements → merge conditions → device test items. Commit tabs and the all-files tab follow. Required IDs: `changes`, `behavior`, `metrics`, `impact`, `requirements`, `review-focus`, `verification`, `merge-checklist`, `follow-up`.
+
+### What was built
+
+Readability is the first goal. Evidence alone does not tell the reviewer what was built. A report that only says checks passed is incomplete. Show the work at the level of the codebase:
+
+- `behavior` explains the change as a whole. It shows the new flow as a diagram, lists the states or outcomes it produces, shows how to run or use it and includes a real output sample. A verification row such as "13 cases passed" lists the cases or links to where they are listed.
+- Each commit tab breaks the commit message's What into files, types and functions, with the Why per row. Code changes get sequence, object/type or state diagrams; see the structure reference for markup and classes. A diagram shows only names and relations that exist in the diff; it is an explanation of the code, not a design proposal.
+- Review findings that led to changes are mapped to the change: finding → commit and code unit → how it was rechecked.
 
 ### Facts and traceability
 

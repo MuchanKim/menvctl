@@ -80,6 +80,8 @@ state() { jq -r "$1" "$XDG_STATE_HOME/menvctl/state.json"; }
 # Release v1.0.0 from a copy of the working tree.
 SRC="$WORK_DIR/src"
 rsync -a --exclude .git "$REPO_ROOT/" "$SRC/"
+# The simulated versions below must not collide with real release sections.
+awk '/^## \[[0-9]/ { exit } { print }' "$SRC/CHANGELOG.md" >"$SRC/c.tmp" && mv "$SRC/c.tmp" "$SRC/CHANGELOG.md"
 # Test-only shared keys for the v1.1.0 removal cases: one left untouched locally,
 # one whose parent changes type locally.
 jq '. + {"menvctlDropped": "shared", "menvctlNested": {"a": 1}}' "$SRC/claude/settings.shared.json" \

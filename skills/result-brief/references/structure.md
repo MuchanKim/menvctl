@@ -9,6 +9,8 @@ The body file contains only tab pages. `build.py` wraps it in `assets/template.h
 - [Snapshots and comparison](#snapshots-and-comparison)
 - [Overview](#overview-tab)
 - [Commit tabs](#commit-tabs)
+- [Diagrams](#diagrams)
+- [Links](#links)
 - [Diff embeds](#embedding-diffs)
 - [Manual checks](#device-checklist-tab)
 - [All files](#all-files-tab)
@@ -18,7 +20,7 @@ The body file contains only tab pages. `build.py` wraps it in `assets/template.h
 
 Read [content.md](content.md) for the evidence contract and reviewer/merge table fields. This skill reports actual work. Use `plan-brief` to document proposed work. `--plan` here means only the optional commit split.
 
-Required sections: `changes`, `metrics`, `impact`, `requirements`, `review-focus`, `verification`, `merge-checklist`, `follow-up`, plus overview and all-files tabs. The builder inserts `#auto-facts` after the hero; do not use that id. Preserve required sections and explain inapplicable items. Structural validation cannot prove that a source supports a claim.
+Required sections: `changes`, `behavior`, `metrics`, `impact`, `requirements`, `review-focus`, `verification`, `merge-checklist`, `follow-up`, plus overview and all-files tabs. The builder inserts `#auto-facts` after the hero; do not use that id. Preserve required sections and explain inapplicable items. Structural validation cannot prove that a source supports a claim.
 
 ## commits.json
 
@@ -70,25 +72,54 @@ The builder resolves `--base` once and records its full SHA separately from HEAD
 |---|---|---|
 | hero | mode, source requirement/plan version, date/owner, conclusion; result change statistics only | `.eyebrow`, `dl.meta`, `.stats` |
 | 변경 전 → 변경 후 (`changes`) | actual behavior/code change with diff evidence; distinguish code inspection from observed runtime behavior | `table.grid` |
+| 동작과 사용법 (`behavior`) | how the change works as a whole: a sequence or flow diagram of the new behavior, the states or outcomes it produces, how to run or use it and a real output sample. For UI work the screenshots go here | `figure` with `svg.dg`, `table.grid`, `pre` |
 | 요구별 결과 (`requirements`) | stable requirement/criterion IDs, original source, implementation state, verification state, evidence, remaining work | `table.grid` |
 | 필수 리뷰 지점 (`review-focus`) | what/why/source, location, acceptance question, required vs proposed | `table.grid` |
 | 검증·측정 (`verification`) | executed commands/scenarios, revision, environment, time, results, metrics with comparable measurement conditions | `.verify`, `table.grid` |
 | 머지 조건 (`merge-checklist`) | sourced conditions, state, evidence/remaining action, human review record when applicable | `table.grid`, required `data-check-kind` / `data-verdict` / `data-basis` attributes |
 | optional details | recorded decisions, actual cross-review, commit map, observed limitations, documented rollback, unperformed manual tests and follow-ups | `.card`, `#commit-map`, separate sections |
 
-Use Korean headings in Korean reports: 변경 전 → 변경 후, 요구별 결과, 필수 리뷰 지점, 검증·측정 결과, 머지 체크리스트. Use the fields in content.md. Do not add synthetic risk scores or invented rationale to results.
+Use Korean headings in Korean reports: 변경 전 → 변경 후, 동작과 사용법, 요구별 결과, 필수 리뷰 지점, 검증·측정 결과, 머지 체크리스트. Use the fields in content.md. Do not add synthetic risk scores or invented rationale to results.
 
 Verdict pills: `pill ok` (동의), `pill warn` (부분 동의), `pill fix` (정정, 반박), `pill must` (P1). Severity pills: `pill must` for P1, `pill warn` for P2.
 
 ## Commit tabs
 
-`<div class="tab-page" data-commit="N" data-summary="one line for the commit list">` with:
+Every commit in the plan needs a body tab `<div class="tab-page" data-commit="N" data-summary="one line for the commit list">`. The builder fails when a commit has no tab, no What table, a changed file missing from the table, or no diagram. Readability comes first: the reviewer should understand what was built from this tab without opening the code.
 
-- `data-toc="무엇을 바꿨나"`: cause and change in one paragraph; an SVG figure if it shows the mechanism.
+- `data-toc="무엇을 바꿨나"`: the commit message's What, broken down to code units. Use `table.grid.what` with the columns `변경 단위 | 무엇을 | 왜 | diff`. The first column names the unit as `<code>path</code> › <code>Type</code> › <code>function()</code>`; one row per changed type or function, and every changed file path appears in at least one row. `무엇을` states the behavior or structure that changed, not the line edit. `왜` gives the reason from the commit's Why or the requirement ID. `diff` links to the hunk (`#cN-diff`) or embeds it.
+- `data-toc="구조"`: at least one diagram (see below). A commit with nothing to draw, such as a constant or text-only change, marks an element with `data-diagram-na="reason"` instead.
 - `data-toc="diff 읽기"`: the hunks worth reading, each with one sentence.
 - `data-toc="리뷰 포인트"`: `ul.points` with non-obvious things to check.
 
-An empty commit tab still gets its generated header and diff.
+```html
+<div class="tab-page" data-commit="1" data-summary="판정 스크립트 추가">
+  <section id="c1-what" data-toc="무엇을 바꿨나"><header><h2><span class="idx"></span>무엇을 바꿨나</h2></header>
+    <div class="card table-wrap"><table class="grid what"><thead><tr><th>변경 단위</th><th>무엇을</th><th>왜</th><th>diff</th></tr></thead><tbody>
+      <tr><td><code>Scripts/verify-tests.sh</code> › <code>judge()</code></td><td>로그의 결과 줄로 통과·실패를 정함</td><td>R1, 종료 코드가 실패를 가림</td><td><a href="#c1-diff">hunk 2</a></td></tr>
+    </tbody></table></div></section>
+  <section id="c1-structure" data-toc="구조"><header><h2><span class="idx"></span>구조</h2></header>
+    <figure><div class="card figure-box"><svg class="dg" viewBox="0 0 720 240" role="img" aria-label="판정 흐름">…</svg></div>
+      <div class="dg-legend"><span class="new">추가</span><span class="changed">변경</span></div>
+      <figcaption>verify-tests.sh 실행 순서</figcaption></figure></section>
+</div>
+```
+
+### Diagrams
+
+Pick the form that shows the change, and draw more than one when the change has both a flow and a structure:
+
+| Change | Diagram |
+|---|---|
+| a call path, async work, a script's steps, a request/response | sequence: participants as boxes on top, dashed `.life` lifelines, arrows in call order, returns as `.edge.back` |
+| new or changed types, ownership, protocol conformance, module layers | object/type: `.box` per type with key members as `text.mono`, arrows for dependency direction |
+| states, verdicts, branching rules | state/flow: one box per state, labeled transitions |
+
+Draw inline SVG with the template classes so colors follow the theme and dark mode; never hard-code colors. `svg.dg` inside `.figure-box`; `.box` plus `new`, `changed`, `removed`, `test` or `warn` for what the commit did to that element; `.edge` (`.hl` for the path this commit adds, `.back` for returns); `.head` for arrowhead markers; `text.sub` for secondary labels. Add a `.dg-legend` for the box states used. Keep labels to real names from the code. Give marker and other SVG ids a commit prefix (`c1-arrow`) because ids must be unique in the whole report. Keep it readable at 720px wide: 13px text, at most about 8 boxes per diagram; split a larger picture into two diagrams.
+
+## Links
+
+The builder links references written as text when `origin` is a GitHub remote: `#123` becomes an issue/PR link, and `<code>sha</code>` or `<code>branch</code>` becomes a commit or branch link when Git resolves it (branches only when pushed to `origin`). Text inside `a`, `pre`, `script`, `style` and `svg` is left alone. Write planning documents and other sources as links; mark a local-only path such as `.context/...` as `로컬 전용`, because readers of an attached report cannot open it.
 
 ## Embedding diffs
 
