@@ -21,7 +21,7 @@ try {
   writeFileSync(join(fixture,'binary.bin'),Buffer.from([0,255,1]));
   run('chmod',['+x','seed.txt']);
   writeFileSync(join(fixture,'artifacts/plan.json'),JSON.stringify({commits:[{message:'Fixture change',files:['seed.txt','a/same.txt','b/same.txt','binary.bin']}]}));
-  const body = (embed) => `<div class="tab-page" data-tab="overview"><header class="hero"><h1>Browser fixture</h1></header>${["changes","requirements","review-focus","verification","merge-checklist"].map(id=>`<section id="${id}">Fixture evidence</section>`).join("")}<section id="intro" data-toc="Result"><h2>검증 결과</h2><div id="commit-map"></div></section></div>
+  const body = (embed) => `<div class="tab-page" data-tab="overview"><header class="hero"><h1>Browser fixture</h1></header>${["changes","requirements","review-focus","verification","merge-checklist","metrics","impact","follow-up"].map(id=>`<section id="${id}">Fixture evidence</section>`).join("")}<section id="intro" data-toc="Result"><h2>검증 결과</h2><div id="commit-map"></div></section></div>
 <div class="tab-page" data-commit="1"><section id="focus" data-toc="Diff"><h2>핵심 변경</h2>${embed}</section></div>
 <div class="tab-page" data-tab="device" data-label="수동 검증"><section id="manual"><ul class="device" id="checks"><li><label><input type="checkbox" data-check-id="fixture">Check behavior</label></li></ul><div data-progress-for="checks"></div></section></div>
 <div class="tab-page" data-tab="all"><section id="all-files"><div id="file-browser"></div></section></div>`;

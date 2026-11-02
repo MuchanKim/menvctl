@@ -2,14 +2,25 @@
   <header class="hero" data-placeholder="replace-all-scaffold-instructions">
     <div class="eyebrow">결과 브리프 · 검토 대기</div>
     <h1>실제로 수행한 작업의 제목으로 교체</h1>
-    <p class="sub">관측한 결과와 남은 미검증 항목을 요약. 성능 향상·요구 충족을 추정하지 않는다.</p>
-    <dl class="meta"><div><dt>요구 기준</dt><dd>원래 요청 또는 기획 브리프의 경로·버전·합의 기록</dd></div><div><dt>대상</dt><dd>보고서 하단의 기준 SHA·HEAD·보고서 ID와 증거의 대상을 대조</dd></div></dl>
+    <dl class="meta"><div><dt>참고 기획 문서</dt><dd>기획 브리프 링크와 버전. 없으면 원래 요청의 출처</dd></div><div><dt>대상</dt><dd>보고서 하단의 기준 SHA·HEAD·보고서 ID와 증거의 대상을 대조</dd></div></dl>
     <div class="stats"><div class="card stat"><div class="n" data-stat="files"></div><div class="l">변경 파일</div></div><div class="card stat"><div class="n" data-stat="breakdown"></div><div class="l">변경 구성</div></div></div>
   </header>
   <section id="changes" data-toc="변경 전 → 변경 후">
     <header><h2><span class="idx"></span>변경 전 → 변경 후</h2></header>
     <div class="card table-wrap"><table class="grid"><thead><tr><th>요구 ID</th><th>변경 전</th><th>변경 후</th><th>근거·관측 범위</th></tr></thead><tbody>
       <tr><td>요구 ID로 교체</td><td>확인한 기존 동작/코드</td><td>실제 변경된 동작/코드</td><td>diff 위치와 실행 관측 여부. 전체 diff만으로 런타임 검증을 주장하지 않는다.</td></tr>
+    </tbody></table></div>
+  </section>
+  <section id="metrics" data-toc="개선 지표">
+    <header><h2><span class="idx"></span>개선 지표</h2></header>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>지표·단위</th><th>변경 전</th><th>변경 후</th><th>조건·표본</th><th>원본</th></tr></thead><tbody>
+      <tr><td>미측정</td><td>미측정</td><td>미측정</td><td>측정이 없으면 수치를 만들지 않는다.</td><td>미기록</td></tr>
+    </tbody></table></div>
+  </section>
+  <section id="impact" data-toc="변경 영향 범위">
+    <header><h2><span class="idx"></span>변경 영향 범위</h2></header>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>변경 지점</th><th>참조하는 곳</th><th>영향받는 화면·기능</th><th>확인 방법</th></tr></thead><tbody>
+      <tr><td>변경한 타입·함수</td><td>검색으로 찾은 호출처와 명령</td><td>에이전트 해석이면 해석이라고 표시</td><td>검색 결과, 테스트 또는 미확인</td></tr>
     </tbody></table></div>
   </section>
   <section id="requirements" data-toc="요구별 결과">
@@ -27,8 +38,8 @@
   </section>
   <section id="verification" data-toc="검증·측정 결과">
     <header><h2><span class="idx"></span>실행한 검증과 측정</h2></header>
-    <div class="card table-wrap"><table class="grid"><thead><tr><th>검증 대상·기준</th><th>명령·조작</th><th>환경·revision·시각</th><th>실제 결과</th><th>증거·한계</th></tr></thead><tbody>
-      <tr><td>검증 항목</td><td>미실행</td><td>미기록</td><td>미확인</td><td>실행 전에는 통과로 표시하지 않는다.</td></tr>
+    <div class="card table-wrap"><table class="grid"><thead><tr><th>검증 대상·기준</th><th>검증자</th><th>명령·조작</th><th>환경·revision·시각</th><th>실제 결과</th><th>증거·한계</th></tr></thead><tbody>
+      <tr data-verifier="none"><td>검증 항목</td><td>없음</td><td>미실행</td><td>미기록</td><td>미확인</td><td>실행 전에는 통과로 표시하지 않는다.</td></tr>
     </tbody></table></div>
     <div class="card"><h3>성능·수치</h3><p>미측정. 실제 측정했다면 지표·단위·전후값·장치·빌드 설정·입력 크기·횟수·집계 방법·원본 로그를 기재. 비교 조건이 다르면 한계를 명시한다.</p></div>
     <div class="card"><h3>리뷰 이력</h3><p>미기록. 실제 검토자·모델 ID(확인 가능한 경우)·시각·대상·판정을 기재. 자기 검토와 독립 리뷰를 구분한다.</p></div>
@@ -42,10 +53,10 @@
     </tbody></table></div>
     <p>모든 판정 행에 data-check-kind·data-verdict·data-basis 필요. 충족은 data-evidence, 해당 없음은 data-reason 필요. 사람의 검토 충족에는 data-actor와 data-time도 필요하다. 본문에도 근거를 보이게 쓴다.</p>
   </section>
-  <section id="follow-up" data-toc="미수행·사용자 확인">
-    <header><h2><span class="idx"></span>미수행 · 사용자 확인</h2></header>
+  <section id="follow-up" data-toc="사용자 실기기 테스트">
+    <header><h2><span class="idx"></span>사용자 실기기 테스트 항목</h2></header>
     <div class="card"><dl class="steps"><dt>요구 ID·필수 근거</dt><dd>실제 완료 기준으로 교체</dd><dt>환경·준비</dt><dd>장치·OS·빌드·데이터·초기 상태</dd><dt>조작</dt><dd>재현 가능한 순서</dd><dt>기대 결과</dt><dd>관측할 결과</dd><dt>실패 조건</dt><dd>어떤 관측이면 실패인지</dd><dt>남길 증거</dt><dd>로그·화면·수행자·시각</dd></dl></div>
-    <p>해당하는 수동 검증이 없으면 이유를 기재하거나 이 선택 섹션을 제거한다. 수행 결과와 미래 제안을 섞지 않는다.</p>
+    <p>해당하는 수동 검증이 없으면 이유를 기재한다. 수행 결과와 미래 제안을 섞지 않는다.</p>
   </section>
 </div>
 <div class="tab-page" data-tab="all" data-label="전체 변경">

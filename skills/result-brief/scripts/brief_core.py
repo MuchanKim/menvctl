@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build a self-contained review brief from a frozen base and working-tree states.
 
-Python 3.9+, Git. No repository/index writes. See references/structure.md for
-commit plans, snapshots and validation. Renames are conservatively shown as D+A.
+Python 3.9+, Git. Never writes the real index; --verify stores tree objects only.
+See references/structure.md for commit plans, snapshots and validation.
+Renames are conservatively shown as D+A.
 """
 import argparse
 import datetime
@@ -13,6 +14,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -23,8 +25,21 @@ MODES = {'100644', '100755', '120000'}
 KINDS = {'fix', 'refactor', 'test', 'feat', 'chore', 'docs'}
 SECTIONS = {
     'planning': {'requirements', 'scenarios', 'acceptance', 'decisions'},
-    'result': {'changes', 'requirements', 'review-focus', 'verification', 'merge-checklist'},
+    'result': {'changes', 'metrics', 'impact', 'requirements', 'review-focus', 'verification',
+               'merge-checklist', 'follow-up'},
 }
+VERIFIERS = {'script', 'implementer', 'independent', 'human', 'none'}
+ASSERTION_RE = re.compile(r'#expect|#require|@Test\b|\bfunc test|\bXCT(?:Assert|Fail|Unwrap)|\bassert\w*\(|\bexpect\(')
+TEST_PATH_RE = re.compile(r'(^|/)(tests?|__tests__)(/|$)|tests?\.[^/]+$', re.I)
+RUNTIME_PATH_RE = re.compile(r'\.(?:xcscheme|xctestplan|pbxproj)$|(^|/)Scripts/')
+UI_PATH_RE = re.compile(r'(^|/)Views?/|View\.swift$|\.(?:xib|storyboard)$')
+SENSITIVE = (
+    ('개인 키', re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----')),
+    ('GitHub 토큰', re.compile(r'\bgh[pousr]_[A-Za-z0-9]{30,}')),
+    ('API 키', re.compile(r'\b(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})')),
+    ('비밀 값', re.compile(r'(?i)\b(?:api[_-]?key|client[_-]?secret|password|passwd|access[_-]?token)\b["\']?\s*[:=]\s*["\'][^"\'\s$]{12,}["\']')),
+    ('주민등록번호', re.compile(r'\b\d{6}-[1-4]\d{6}\b')),
+)
 HUNK_RE = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@.*$')
 
 
@@ -206,6 +221,9 @@ class BodyCheck(HTMLParser):
         self.issues, self.ids, self.tabs, self.commit_tabs, self.checks = [], set(), [], [], set()
         self.links = []
         self.embeds = 0
+        self.images = 0
+        self.screenshot_na = False
+        self.summary = False
         self.stats = []
         self.stack = []
         self.reserved = set(re.findall(r'id="([^"{}]+)"', TEMPLATE.read_text(encoding="utf-8")))
@@ -219,6 +237,16 @@ class BodyCheck(HTMLParser):
                 self.issues.append('머지 판정 행에 data-verdict 필요')
             if not a.get('data-basis', '').strip():
                 self.issues.append('머지 판정 행에 data-basis 필요')
+        in_verification = a.get('id') == 'verification' or any(x[1] == 'verification' for x in self.stack)
+        if tag == 'tr' and in_verification and not any(x[0] == 'thead' for x in self.stack):
+            verifier = a.get('data-verifier')
+            if verifier not in VERIFIERS:
+                self.issues.append('검증 행에 data-verifier 필요 (script|implementer|independent|human|none)')
+            elif verifier != 'none' and not a.get('data-verifier-name', '').strip():
+                self.issues.append('검증 행에 실제 검증자 data-verifier-name 필요')
+        if tag == 'p' and 'sub' in a.get('class', '').split(): self.summary = True
+        if tag == 'img' and a.get('src', '').startswith('data:'): self.images += 1
+        if 'data-screenshot-na' in a: self.screenshot_na = bool(a['data-screenshot-na'].strip())
         if tag not in ('area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'):
             self.stack.append((tag, a.get('id')))
 
@@ -266,9 +294,19 @@ class BodyCheck(HTMLParser):
         self.handle_endtag(tag)
 
 
-def check_body(content, commits, issues, mode='result'):
+def repo_file(entry):
+    # --strip-prefix는 표시만 바꾸므로 분류는 저장소 경로로 한다.
+    return entry.get('repoPath', entry['path'])
+
+
+def check_body(content, commits, issues, mode='result', files=()):
     check = BodyCheck(); check.feed(content)
     issues.extend(check.issues)
+    if mode == 'result':
+        if check.summary: issues.append('첫 화면 요약 문장(.sub)은 넣지 않음')
+        if 'auto-facts' in check.ids: issues.append('auto-facts는 자동 기록용 id임')
+        if any(UI_PATH_RE.search(repo_file(f)) for f in files) and not (check.images or check.screenshot_na):
+            issues.append('UI 변경에 스크린샷 필요 (사유가 있으면 data-screenshot-na)')
     if 'overview' not in check.tabs: issues.append('overview 탭 필요')
     for section in sorted(SECTIONS[mode] - check.ids): issues.append(f'{mode} 필수 섹션 누락: {section}')
     if mode == 'result':
@@ -287,17 +325,178 @@ def check_body(content, commits, issues, mode='result'):
     if '[REPLACE]' in content: issues.append('미완성 placeholder가 남아 있음')
 
 
+def sensitive_findings(files, commits, content):
+    found = set()
+    entries = [*files, *(entry for c in commits for entry in c['files'])]
+    sources = [(entry['path'], line[1]) for entry in entries for hunk in entry['hunks'] for line in hunk['lines']]
+    sources += [('본문', line) for line in content.split('\n')]
+    for path, text in sources:
+        for name, pattern in SENSITIVE:
+            if pattern.search(text): found.add((path, name))
+    return sorted(found)
+
+
+def reject_sensitive(findings):
+    # --draft로도 통과시키지 않는다. 초안 표시는 노출을 막지 못한다.
+    messages = [f'민감 정보 의심: {path} ({name})' for path, name in findings]
+    if messages: raise ValueError('\n'.join(messages))
+
+
+def working_tree_id():
+    """Same value before and after committing identical content."""
+    index = os.fsdecode(git('rev-parse', '--git-path', 'index')).strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        temp = Path(tmp) / 'index'
+        if Path(index).exists(): shutil.copy2(index, temp)
+        env = {**os.environ, 'GIT_INDEX_FILE': str(temp)}
+        for args in (['add', '-A'], ['write-tree']):
+            r = subprocess.run(['git', *args], capture_output=True, env=env)
+            if r.returncode != 0: raise ValueError(f"git {args[0]} 실패: {r.stderr.decode('utf-8', 'replace').strip()}")
+    return r.stdout.decode().strip()
+
+
+def load_verify(path, issues):
+    record = json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(record, dict) or record.get('verdict') not in ('pass', 'fail'):
+        raise ValueError('--verify 기록에 verdict(pass|fail) 필요')
+    record['current'] = record.get('tree') == working_tree_id()
+    if not record['current']: issues.append('테스트 판정 기록이 현재 작업 트리와 다름; 다시 실행하세요')
+    if record.get('source') != 'run': issues.append('외부 로그 판정은 테스트 증거가 아님; 실제로 실행하세요')
+    record['earlier'] = same_tree_runs(Path(path).parent / 'history.jsonl', record.get('tree'), record.get('finished_at'))
+    return record
+
+
+def same_tree_runs(path, tree, latest):
+    if not path.exists(): return []
+    runs = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    return [r for r in runs if r.get('tree') == tree and r.get('finished_at') != latest]
+
+
+def load_review(path, issues):
+    """First line is `tree <id>`; the rest is the reviewer's verbatim output."""
+    head, _, body = Path(path).read_text(encoding='utf-8').partition('\n')
+    if head != f'tree {working_tree_id()}': issues.append('리뷰 기록이 현재 작업 트리와 다름; 다시 리뷰하세요')
+    if not body.strip(): issues.append('리뷰 원문이 비어 있음')
+    return body
+
+
+# 라벨과 template의 table.grid 색 클래스(a 초록, b 빨강)
+FILE_STATUS = {'A': ('추가', 'a'), 'M': ('수정', ''), 'D': ('삭제', 'b')}
+
+
+def folder_tree(files):
+    """Changed files as a directory tree; directory keys end with `/`, chains of single subdirectories are collapsed."""
+    root = {}
+    for f in files:
+        *dirs, name = PurePosixPath(f['path']).parts
+        node = root
+        for d in dirs: node = node.setdefault(d + '/', {})
+        node[name] = f
+    def totals(node):
+        add = rem = count = 0
+        for k, v in node.items():
+            a, r, c = totals(v) if k.endswith('/') else (v['add'], v['del'], 1)
+            add += a; rem += r; count += c
+        return add, rem, count
+    rows = []
+    def walk(node, indent, top):
+        items = sorted(node.items(), key=lambda kv: (not kv[0].endswith('/'), kv[0]))
+        for i, (name, v) in enumerate(items):
+            last = i == len(items) - 1
+            branch = '' if top else ('└─ ' if last else '├─ ')
+            if name.endswith('/'):
+                while len(v) == 1 and next(iter(v)).endswith('/'):
+                    child = next(iter(v)); name += child; v = v[child]
+                add, rem, count = totals(v)
+                rows.append((indent + branch, name, (f'파일 {count}', ''), add, rem))
+                walk(v, '' if top else indent + (' ' * 3 if last else '│  '), False)
+            else:
+                rows.append((indent + branch, name, FILE_STATUS.get(v['status'], (v['status'], '')), v['add'], v['del']))
+    walk(root, '', True)
+    add, rem, count = totals(root)
+    td = lambda text, cls: f'<td class="{cls}">{html.escape(text)}</td>' if cls else f'<td>{html.escape(text)}</td>'
+    body = ''.join(f'<tr><td><span class="mono">{html.escape(p)}</span><code>{html.escape(n)}</code></td>{td(*s)}'
+                   f'{td(f"+{a}", "a" if a else "")}{td(f"-{r}", "b" if r else "")}</tr>' for p, n, s, a, r in rows)
+    return (f'<p class="mono count">파일 {count} · <span class="p">+{add}</span> <span class="m">-{rem}</span></p><div class="card table-wrap"><table class="grid files">'
+            f'<thead><tr><th>경로</th><th>상태</th><th>추가</th><th>삭제</th></tr></thead><tbody>{body}</tbody></table></div>')
+
+
+def watched_files_table(files):
+    rows = [f for f in files if TEST_PATH_RE.search(repo_file(f)) or RUNTIME_PATH_RE.search(repo_file(f))]
+    if not rows: return '<p>테스트와 실행 설정 파일 변경 없음.</p>'
+    body = ''.join(f'<tr><td><code>{html.escape(f["path"])}</code></td><td>+{f["add"]}</td><td>-{f["del"]}</td></tr>' for f in rows)
+    return ('<div class="card table-wrap"><table class="grid files"><thead><tr><th>테스트·실행 설정 파일</th><th>추가</th><th>삭제</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div>')
+
+
+def earlier_runs_table(record):
+    if record is None or not record['earlier']: return ''
+    body = ''.join(f'<tr><td>{html.escape(str(r.get("finished_at", "")))}</td><td>{html.escape(str(r.get("verdict", "")))}</td><td>{html.escape(str(r.get("reason", "")))}</td><td>{html.escape(str(r.get("failures", "")))}</td></tr>' for r in record['earlier'])
+    return ('<h3>같은 코드의 이전 실행</h3><div class="card table-wrap"><table class="grid"><thead><tr><th>시각</th><th>판정</th><th>사유</th><th>실패</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div>')
+
+
+def review_block(body):
+    if body is None: return '<p>Codex 리뷰 기록 없음.</p>'
+    return f'<pre class="msg-full prose card">{html.escape(body)}</pre>'
+
+
+def test_changes_table(files):
+    rows = [(f['path'], line[0], line[1].strip()) for f in files if TEST_PATH_RE.search(repo_file(f))
+            for hunk in f['hunks'] for line in hunk['lines']
+            if line[0] in '+-' and ASSERTION_RE.search(line[1])]
+    if not any(TEST_PATH_RE.search(repo_file(f)) for f in files): return '<p>테스트 파일 변경 없음.</p>'
+    if not rows: return '<p>기대값 패턴 자동 탐지 없음. 미확인이므로 테스트 파일 diff를 직접 확인한다.</p>'
+    removed = sum(1 for r in rows if r[1] == '-')
+    body = ''.join(f'<tr><td><code>{html.escape(p)}</code></td><td>{"삭제" if k == "-" else "추가"}</td><td><code>{html.escape(t)}</code></td></tr>' for p, k, t in rows)
+    return (f'<p>기대값·테스트 선언 추가 {len(rows) - removed}줄, 삭제 {removed}줄.</p><div class="card table-wrap"><table class="grid">'
+            f'<thead><tr><th>파일</th><th>변경</th><th>줄</th></tr></thead><tbody>{body}</tbody></table></div>')
+
+
+def verify_table(record):
+    if record is None: return '<p>자동 판정 기록 없음.</p>'
+    passed = record['verdict'] == 'pass'
+    values = [('사유', record.get('reason', '')), ('테스트', record.get('tests', '')), ('실패', record.get('failures', '')),
+              ('하한', record.get('floor', '')), ('커밋', str(record.get('sha', ''))[:12]),
+              ('작업 트리', '일치' if record['current'] else '낡음'), ('실행 시각', record.get('finished_at', ''))]
+    cells = ''.join(f'<div><dt>{k}</dt><dd>{html.escape(str(v))}</dd></div>' for k, v in values)
+    failed = ''.join(f'<li><code>{html.escape(str(x))}</code></li>' for x in record.get('failed_tests', []))
+    return (f'<div class="card verdict {"pass" if passed else "fail"}"><span class="pill {"ok" if passed else "must"}">판정 {"통과" if passed else "실패"}</span>'
+            f'<dl class="commit-meta">{cells}</dl>' + (f'<div><b class="small">실패한 테스트</b><ul>{failed}</ul></div>' if failed else '') + '</div>')
+
+
+def automatic_section(files, verify, review=None):
+    return ('<section id="auto-facts" data-toc="자동 기록"><header><h2><span class="idx"></span>자동 기록</h2></header>'
+            '<p class="lede">이 절은 빌더가 생성한다. 모델이 쓴 문장이 없다.</p>'
+            f'<h3>테스트 판정</h3>{verify_table(verify)}{earlier_runs_table(verify)}<h3>폴더 diff</h3>{folder_tree(files)}'
+            f'<h3>테스트와 실행 설정 변경</h3>{watched_files_table(files)}'
+            f'<h3>테스트 기대값 변경</h3>{test_changes_table(files)}'
+            f'<h3>Codex 리뷰 원문</h3>{review_block(review)}</section>')
+
+
+def with_automatic_section(content, section):
+    tab = re.search(r'<div[^>]*data-tab\s*=\s*["\']?overview["\']?[^>]*>', content)
+    if not tab: raise ValueError('overview 탭 필요')
+    hero = re.compile(r'\s*<header\s+class\s*=\s*["\']?hero["\']?.*?</header>', re.S).match(content, tab.end())
+    at = hero.end() if hero else tab.end()
+    return content[:at] + section + content[at:]
+
+
 def main(mode):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('content'); ap.add_argument('out')
     ap.add_argument('--base', default=None); ap.add_argument('--title'); ap.add_argument('--plan')
     ap.add_argument('--strip-prefix', default=None)
+    ap.add_argument('--verify', help='Scripts/verify-tests.sh가 남긴 JSON 기록')
+    ap.add_argument('--review', help='첫 줄이 tree <id>이고 나머지가 리뷰 원문인 파일')
     ap.add_argument('--draft', action='store_true', help='불완전한 계획/본문을 초안 배너와 함께 출력')
     args = ap.parse_args()
     args.mode = mode
     content_path, out_path = Path(args.content).resolve(), Path(args.out).resolve()
     plan_path = Path(args.plan).resolve() if args.plan else None
-    for source in (content_path, plan_path):
+    verify_path = Path(args.verify).resolve() if args.verify else None
+    review_path = Path(args.review).resolve() if args.review else None
+    for source in (content_path, plan_path, verify_path, review_path):
         if source is not None and (out_path == source or (out_path.exists() and source.exists() and out_path.samefile(source))):
             raise ValueError('출력은 입력 파일과 달라야 함')
     issues = []
@@ -305,8 +504,8 @@ def main(mode):
     base_sha = head = None
     base, work, files, commits, plan = {}, {}, [], [], None
     if args.mode == 'planning':
-        if args.base is not None or plan_path or args.strip_prefix is not None:
-            raise ValueError('planning에는 --base / --plan / --strip-prefix를 사용할 수 없음')
+        if args.base is not None or plan_path or args.strip_prefix is not None or args.verify or args.review:
+            raise ValueError('planning에는 --base / --plan / --strip-prefix / --verify / --review를 사용할 수 없음')
     else:
         root = Path(os.fsdecode(git('rev-parse', '--show-toplevel')).strip())
         os.chdir(root)
@@ -328,13 +527,23 @@ def main(mode):
     def display(entries):
         used = set()
         for f in entries:
+            f['repoPath'] = f['path']
             if prefix and f['path'].startswith(prefix): f['path'] = f['path'][len(prefix):]
             if f['path'] in used: raise ValueError('prefix 제거 후 경로 충돌')
             used.add(f['path'])
     display(files)
     for c in commits: display(c['files'])
     content = content_path.read_text(encoding='utf-8')
-    check_body(content, commits, issues, args.mode)
+    check_body(content, commits, issues, args.mode, files)
+    if args.mode == 'result':
+        if files and not plan: issues.append('변경이 있으면 커밋 계획(--plan) 필요')
+        reject_sensitive(sensitive_findings(files, commits, content))
+        verify = load_verify(verify_path, issues) if verify_path else None
+        review = load_review(review_path, issues) if review_path else None
+        evidence = '\n'.join(p.read_text(encoding='utf-8') for p in (verify_path, review_path) if p)
+        if verify: evidence += '\n' + json.dumps(verify['earlier'], ensure_ascii=False)
+        reject_sensitive(('증거 파일', name) for _, name in sensitive_findings([], [], evidence))
+        content = with_automatic_section(content, automatic_section(files, verify, review))
     if issues and not args.draft: raise ValueError('\n'.join(issues))
     title_match = re.search(r'<h1[^>]*>(.*?)</h1>', content, re.S)
     title = args.title or (re.sub(r'<[^>]+>', '', title_match[1]).strip() if title_match else '작업 보고서')

@@ -18,7 +18,7 @@ The body file contains only tab pages. `build.py` wraps it in `assets/template.h
 
 Read [content.md](content.md) for the evidence contract and reviewer/merge table fields. This skill reports actual work. Use `plan-brief` to document proposed work. `--plan` here means only the optional commit split.
 
-Required sections: `changes`, `requirements`, `review-focus`, `verification`, `merge-checklist`, plus overview and all-files tabs. Preserve required sections and explain inapplicable items. Structural validation cannot prove that a source supports a claim.
+Required sections: `changes`, `metrics`, `impact`, `requirements`, `review-focus`, `verification`, `merge-checklist`, `follow-up`, plus overview and all-files tabs. The builder inserts `#auto-facts` after the hero; do not use that id. Preserve required sections and explain inapplicable items. Structural validation cannot prove that a source supports a claim.
 
 ## commits.json
 
@@ -57,6 +57,10 @@ The builder compares the chosen base commit with the working tree, including sta
 Merge conflicts, submodules/gitlinks, special files and paths traversing symlink directories are rejected explicitly. Git clean/smudge filters, LFS materialization and line-ending normalization are not applied: this is a comparison of base blob bytes with filesystem bytes, not a promise of the exact eventual staged patch. Review such repositories accordingly. There is no staged-only mode. A repository with no initial commit needs an explicit committed baseline first; the skill must not create that commit automatically.
 
 The builder resolves `--base` once and records its full SHA separately from HEAD. It detects working-tree/HEAD changes during generation and fails; edits after generation require rebuilding. It reads repository file contents to compare states, so very large repositories may take time. Do not silently truncate a report or omit files to make it faster.
+
+## Verify record
+
+`--verify` reads JSON with `verdict` (`pass` or `fail`) and `tree`, plus optional `reason`, `tests`, `failures`, `floor`, `sha`, `finished_at` and `failed_tests`. `tree` is the tree id of the working state, from `git add -A` and `git write-tree` on a copy of the index, so it stays equal after committing the same content. A different `tree` or a `source` other than `run` fails the build. Runs for the same tree in a sibling `history.jsonl` are listed.
 
 ## Overview tab
 
@@ -129,7 +133,7 @@ Optional per-file notes: `<script type="application/json" id="file-notes">{"Name
 
 Python generation checks required sections and verdict evidence attributes, then (for this result brief) Git state, plan shape, paths, final state, basic body structure, duplicate IDs, stable checkbox IDs, resource tags, and scaffold markers (`data-placeholder` or the explicit token `[REPLACE]`). It is not a full HTML sanitizer or a fact checker. Ordinary words such as TODO or model-id in actual requirements are allowed. Write completion evidence manually only after checking it.
 
-Without `--plan`, remove `data-commit` tabs and links to `#cN`; include overview and all-files tabs. Commit pages may be generated automatically when the plan exists. Keep `data-tab="cN"` reserved for generated commit pages. An empty change is a valid no-change report, not evidence of work performed.
+A report with changes needs `--plan`. Only a report with no changes omits it; then remove `data-commit` tabs and links to `#cN` and include overview and all-files tabs. Commit pages may be generated automatically when the plan exists. Keep `data-tab="cN"` reserved for generated commit pages. An empty change is a valid no-change report, not evidence of work performed.
 
 `--draft` permits report-content/plan-consistency issues with a visible warning; hard input/Git errors still fail. Exit 0 means a file was generated, not that a draft passed acceptance. On normal validation failure the previous output remains unchanged and must not be mistaken for a fresh report. Only use the output after a successful normal build and browser validation.
 

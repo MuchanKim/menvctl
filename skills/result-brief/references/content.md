@@ -8,7 +8,7 @@ If no planning brief exists, recover requirements from the actual user request o
 
 ## Result brief
 
-Order: factual outcome → before/after → requirement results → mandatory review points → performed verification/measurements → merge conditions. Diff/commit tabs follow as supporting evidence. Required IDs: `changes`, `requirements`, `review-focus`, `verification`, `merge-checklist`.
+Order: automatic facts → before/after → metrics → impact → requirement results → mandatory review points → performed verification/measurements → merge conditions → device test items. Commit tabs and the all-files tab follow. Required IDs: `changes`, `metrics`, `impact`, `requirements`, `review-focus`, `verification`, `merge-checklist`, `follow-up`.
 
 ### Facts and traceability
 

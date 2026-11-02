@@ -6,29 +6,51 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-02
+
+### Changed
+
+- `result-brief`: a report with changes now requires a commit plan (`--plan`);
+  each commit gets its own tab with message, diff and notes.
+- `result-brief`: new `--verify` and `--review` inputs. The builder inserts an
+  automatic facts section after the hero: test verdict, folder diff as a file
+  tree with colored add/delete counts, test and runtime config changes, test
+  expectation changes, and the verbatim review. A record for a different
+  working tree fails the build.
+- `result-brief`: required sections add metrics, impact and device test items;
+  the verification table adds a verifier column.
+- `result-brief`, `plan-brief`: readability. Verdict card, body font for
+  metadata and review text, table headers kept as written, long code wraps
+  inside table cells, numeric columns right-aligned.
+
 ## [1.2.0] - 2026-11-01
 
 ### Added
 
-- Claude plugin `pstack@cursor-plugins`
+- Claude plugin `pstack@cursor-plugins` (cursor/plugins): engineering
+  playbooks and principle skills, entered through `/pstack:poteto-mode`.
 
 ### Changed
 
-- `.gitignore`
-- `claude/CLAUDE.md`
+- `claude/CLAUDE.md`: adds the `/pstack:poteto-mode` row and a role split:
+  gstack for planning and product direction, pstack for implementation,
+  maintenance, and refactoring, `/codex review` for review.
+- `.gitignore`: ignores `__pycache__/` so script caches are not published.
 
 ## [1.1.0] - 2026-10-31
 
 ### Added
 
-- Claude skill `plan-brief`
-- Claude skill `result-brief`
-- Codex skill `plan-brief`
-- Codex skill `result-brief`
+- Skill `plan-brief` (Claude, Codex): builds a self-contained HTML planning
+  brief with requirements, scope, scenarios, acceptance criteria, and open
+  decisions, for review before implementation.
+- Skill `result-brief` (Claude, Codex): builds a self-contained HTML result
+  brief mapping requirements to actual changes and verification evidence,
+  reviewer focus, and merge conditions.
 
 ### Changed
 
-- `README.md`
+- `README.md`: lists both skills and the `result-brief` test command.
 
 ## [1.0.1] - 2026-10-27
 

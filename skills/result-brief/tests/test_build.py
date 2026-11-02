@@ -38,7 +38,16 @@ class BuilderTests(unittest.TestCase):
         return b.differences(self.base, b.working_states(self.base))
     def plan(self, files):
         return {'commits': [{'message': 'Change', 'files': files}]}
-    def run_cli(self, plan=None, *extra):
+    def changed_plan(self, extra):
+        # 커밋 계획 필수 규칙이 다른 실패 사유를 가리지 않도록 계획을 채운다.
+        base = extra[extra.index('--base') + 1] if '--base' in extra else 'HEAD'
+        try:
+            before = b.base_states(base)
+            changed = [entry['path'] for entry in b.differences(before, b.working_states(before))]
+        except ValueError:
+            return None
+        return self.plan(changed) if changed else None
+    def run_cli(self, plan=None, *extra, auto_plan=True):
         extra = list(extra)
         script = SCRIPT
         if '--mode' in extra:
@@ -46,6 +55,8 @@ class BuilderTests(unittest.TestCase):
             del extra[index:index + 2]
             if mode == 'planning': script = SCRIPT.parents[2] / 'plan-brief/scripts/build.py'
         cmd = [sys.executable, '-B', str(script), str(self.body), str(self.out)]
+        if plan is None and auto_plan and script == SCRIPT and '--plan' not in extra:
+            plan = self.changed_plan(extra)
         if plan is not None:
             self.plan_path.write_text(json.dumps(plan)); cmd += ['--plan', str(self.plan_path)]
         return subprocess.run(cmd + list(extra), capture_output=True, text=True)
@@ -273,5 +284,167 @@ class BuilderTests(unittest.TestCase):
     def test_schema_wrong_types_fail_cleanly(self):
         for plan in [{'commits':{}},self.plan([5]),self.plan([{'path':'seed','mode':[]}]),{'commits':[{'message':'x','files':['seed'],'kind':[]}]},{'commits':[{'message':'x','files':['seed'],'risk':{'level':'invalid'}}]}]:
             r=self.run_cli(plan);self.assertEqual(r.returncode,2);self.assertNotIn('Traceback',r.stderr)
+
+    def overview_body(self, inner=''):
+        return '<div class="tab-page" data-tab="overview"><header class="hero"><h1>Regression</h1></header>' + inner + RESULT_SECTIONS + '</div><div class="tab-page" data-tab="all"><div id="file-browser"></div></div>'
+    def verify_record(self, **values):
+        path = Path(self.artifacts.name) / 'verify.json'
+        record = dict(verdict='pass', reason='passed', source='run', tests=485, failures=0, floor=485, sha='a' * 40, tree=b.working_tree_id(), finished_at='2026-11-02T00:00:00+09:00')
+        path.write_text(json.dumps({**record, **values}))
+        return str(path)
+    def test_changes_without_commit_plan_rejected(self):
+        self.write('seed', b'new\n')
+        r = self.run_cli(auto_plan=False)
+        self.assertEqual(r.returncode, 2); self.assertIn('커밋 계획', r.stderr)
+    def test_summary_sentence_rejected(self):
+        self.body.write_text(self.overview_body('<p class="sub">모두 통과했다</p>'))
+        r = self.run_cli()
+        self.assertEqual(r.returncode, 2); self.assertIn('요약 문장', r.stderr)
+    def test_verification_row_needs_verifier(self):
+        body = '<div class="tab-page" data-tab="overview"><section id="verification"><table><tbody><tr><td>x</td></tr></tbody></table></section>' + ''.join(f'<section id="{n}">x</section>' for n in sorted(b.SECTIONS['result'] - {'verification'})) + '</div><div class="tab-page" data-tab="all"><div id="file-browser"></div></div>'
+        self.body.write_text(body)
+        r = self.run_cli()
+        self.assertEqual(r.returncode, 2); self.assertIn('data-verifier', r.stderr)
+        self.body.write_text(body.replace('<tr>', '<tr data-verifier="human">'))
+        r = self.run_cli()
+        self.assertEqual(r.returncode, 2); self.assertIn('data-verifier-name', r.stderr)
+        self.body.write_text(body.replace('<tr>', '<tr data-verifier="script" data-verifier-name="Scripts/verify-tests.sh">'))
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+    def test_ui_change_needs_screenshot_or_reason(self):
+        self.write('App/Views/HomeView.swift', b'struct HomeView {}\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli()
+        self.assertEqual(r.returncode, 2); self.assertIn('스크린샷', r.stderr)
+        self.body.write_text(self.overview_body('<p data-screenshot-na="내부 이름만 변경">사유</p>'))
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+        self.body.write_text(self.overview_body('<img src="data:image/png;base64,AA" alt="화면">'))
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+    def test_sensitive_value_rejected_and_not_printed(self):
+        value = 'ghp_' + 'a' * 36
+        self.write('seed', f'token {value}\n'.encode())
+        r = self.run_cli()
+        self.assertEqual(r.returncode, 2); self.assertIn('민감 정보 의심: seed', r.stderr); self.assertNotIn(value, r.stderr)
+    def test_automatic_section_reports_folders_and_expectation_changes(self):
+        self.write('Tests/AppTests.swift', b'#expect(value == 1)\n'); self.commit()
+        self.write('Tests/AppTests.swift', b'#expect(value == 2)\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+        html = self.out.read_text()
+        self.assertLess(html.index('id="auto-facts"'), html.index('id="changes"'))
+        self.assertIn('<code>Tests/</code>', html); self.assertIn('<code>#expect(value == 2)</code>', html); self.assertIn('삭제 1줄', html)
+    def test_folder_tree_lists_each_file_under_collapsed_directories(self):
+        f = lambda path, status, add, rem: {'path': path, 'status': status, 'add': add, 'del': rem}
+        html = b.folder_tree([f('App/Sources/Map/A.swift', 'M', 3, 0), f('App/Sources/Map/B.swift', 'A', 5, 0),
+                              f('App/Tests/T.swift', 'D', 0, 2), f('README.md', 'M', 1, 1)])
+        rows = html.split('<tbody>')[1].split('<tr>')[1:]
+        cells = [(r.split('<span class="mono">')[1].split('</span>')[0], r.split('<code>')[1].split('</code>')[0]) for r in rows]
+        self.assertEqual(cells, [('', 'App/'), ('├─ ', 'Sources/Map/'), ('│  ├─ ', 'A.swift'), ('│  └─ ', 'B.swift'),
+                                 ('└─ ', 'Tests/'), ('   └─ ', 'T.swift'), ('', 'README.md')])
+        self.assertIn('파일 4 · <span class="p">+9</span> <span class="m">-3</span>', html)
+        self.assertIn('<td>파일 3</td><td class="a">+8</td><td class="b">-2</td>', html)
+        self.assertIn('<code>A.swift</code></td><td>수정</td><td class="a">+3</td><td>-0</td>', html)
+        self.assertIn('<code>B.swift</code></td><td class="a">추가</td>', html)
+        self.assertIn('<code>T.swift</code></td><td class="b">삭제</td><td>+0</td><td class="b">-2</td>', html)
+    def test_verify_record_rendered_when_tree_matches(self):
+        self.write('seed', b'new\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--verify', self.verify_record()); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('일치', self.out.read_text())
+    def test_stale_verify_record_rejected(self):
+        self.write('seed', b'new\n'); record = self.verify_record()
+        self.write('seed', b'newer\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--verify', record)
+        self.assertEqual(r.returncode, 2); self.assertIn('다시 실행', r.stderr)
+    def test_log_only_verify_record_rejected(self):
+        self.write('seed', b'new\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--verify', self.verify_record(source='log'))
+        self.assertEqual(r.returncode, 2); self.assertIn('외부 로그', r.stderr)
+    def test_earlier_failure_on_same_tree_is_shown(self):
+        self.write('seed', b'new\n'); record = self.verify_record()
+        history = Path(record).parent / 'history.jsonl'
+        history.write_text(json.dumps(dict(finished_at='earlier', verdict='fail', reason='failed_tests', failures=3, tree=b.working_tree_id())) + '\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--verify', record); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('같은 코드의 이전 실행', self.out.read_text())
+    def test_all_test_and_runtime_file_changes_listed(self):
+        self.write('Tests/Stub.swift', b'value\n'); self.write('Scripts/run.sh', b'x\n'); self.commit()
+        self.write('Tests/Stub.swift', b'other\n'); self.write('Scripts/run.sh', b'y\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+        html = self.out.read_text()
+        self.assertIn('<code>Tests/Stub.swift</code>', html); self.assertIn('<code>Scripts/run.sh</code>', html)
+    def test_review_text_is_embedded_verbatim_and_stale_review_rejected(self):
+        self.write('seed', b'new\n')
+        review = Path(self.artifacts.name) / 'review.txt'
+        review.write_text(f'tree {b.working_tree_id()}\n[P1] <원문> 지적\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--review', str(review)); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('[P1] &lt;원문&gt; 지적', self.out.read_text())
+        self.write('seed', b'newer\n')
+        r = self.run_cli(None, '--review', str(review))
+        self.assertEqual(r.returncode, 2); self.assertIn('다시 리뷰', r.stderr)
+    def test_secret_in_evidence_rejected(self):
+        self.write('seed', b'new\n')
+        review = Path(self.artifacts.name) / 'review.txt'
+        value = 'ghp_' + 'a' * 36
+        review.write_text(f'tree {b.working_tree_id()}\n{value}\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--review', str(review))
+        self.assertEqual(r.returncode, 2); self.assertIn('증거 파일', r.stderr); self.assertNotIn(value, r.stderr)
+    def test_output_cannot_overwrite_evidence(self):
+        self.write('seed', b'new\n'); record = self.verify_record()
+        self.body.write_text(self.overview_body())
+        self.out = Path(record)
+        r = self.run_cli(None, '--verify', record)
+        self.assertEqual(r.returncode, 2); self.assertTrue(json.loads(Path(record).read_text()))
+    def test_relative_evidence_path_from_subdirectory(self):
+        self.write('sub/keep', b'x\n'); self.commit()
+        self.write('seed', b'new\n'); record = Path(self.verify_record())
+        self.body.write_text(self.overview_body())
+        os.chdir('sub'); local = Path('verify.json').resolve()
+        local.write_text(record.read_text())
+        Path(self.repo.name, '.git', 'info', 'exclude').write_text('sub/verify.json\n')
+        r = self.run_cli(self.plan(['seed']), '--verify', 'verify.json'); self.assertEqual(r.returncode, 0, r.stderr)
+    def test_single_quoted_overview_is_accepted(self):
+        self.write('seed', b'new\n')
+        self.body.write_text(self.overview_body().replace('data-tab="overview"', "data-tab='overview'"))
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+    def test_strip_prefix_does_not_change_classification(self):
+        self.write('Tests/Stub.swift', b'#expect(a == 1)\n'); self.commit()
+        self.write('Tests/Stub.swift', b'#expect(a == 2)\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--strip-prefix', 'Tests/'); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('<code>#expect(a == 2)</code>', self.out.read_text())
+    def test_secret_blocks_draft_too(self):
+        self.write('seed', ('token ghp_' + 'a' * 36 + '\n').encode())
+        r = self.run_cli(None, '--draft')
+        self.assertEqual(r.returncode, 2); self.assertFalse(self.out.exists())
+    def test_secret_in_earlier_run_rejected(self):
+        self.write('seed', b'new\n'); record = self.verify_record()
+        history = Path(record).parent / 'history.jsonl'
+        history.write_text(json.dumps(dict(finished_at='earlier', verdict='fail', reason='ghp_' + 'a' * 36, tree=b.working_tree_id())) + '\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(None, '--verify', record)
+        self.assertEqual(r.returncode, 2); self.assertIn('증거 파일', r.stderr)
+    def test_no_expectation_match_is_reported_as_unknown(self):
+        self.write('Tests/Stub.swift', b'    1\n'); self.commit()
+        self.write('Tests/Stub.swift', b'    2\n')
+        self.body.write_text(self.overview_body())
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('미확인', self.out.read_text())
+    def test_spaced_overview_attribute_is_accepted(self):
+        self.write('seed', b'new\n')
+        self.body.write_text(self.overview_body().replace('data-tab="overview"', 'data-tab = "overview"'))
+        r = self.run_cli(); self.assertEqual(r.returncode, 0, r.stderr)
+    def test_tree_id_survives_commit_of_same_content(self):
+        self.write('seed', b'new\n'); before = b.working_tree_id()
+        self.commit()
+        self.assertEqual(before, b.working_tree_id())
+    def test_tree_id_leaves_real_index_untouched(self):
+        self.write('untracked', b'x\n'); status = self.g('status', '--porcelain')
+        b.working_tree_id()
+        self.assertEqual(status, self.g('status', '--porcelain'))
 
 if __name__ == '__main__': unittest.main()
