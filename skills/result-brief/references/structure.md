@@ -62,7 +62,7 @@ The builder resolves `--base` once and records its full SHA separately from HEAD
 
 ## Verify record
 
-`--verify` reads JSON with `verdict` (`pass` or `fail`) and `tree`, plus optional `reason`, `tests`, `failures`, `floor`, `sha`, `finished_at` and `failed_tests`. `tree` is the tree id of the working state, from `git add -A` and `git write-tree` on a copy of the index, so it stays equal after committing the same content. A different `tree` or a `source` other than `run` fails the build. Runs for the same tree in a sibling `history.jsonl` are listed.
+`--verify` reads JSON with `verdict` (`pass` or `fail`) and `tree`, plus optional `reason`, `tests`, `failures`, `sha`, `finished_at` and `failed_tests`. `tree` is the tree id of the working state, from `git add -A` and `git write-tree` on a copy of the index, so it stays equal after committing the same content. A different `tree` or a `source` other than `run` fails the build. Runs for the same tree in a sibling `history.jsonl` are listed.
 
 ## Overview tab
 

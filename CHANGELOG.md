@@ -6,6 +6,14 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-11-02
+
+### Changed
+
+- `result-brief`: the test verdict card no longer shows a 하한 (test count
+  floor) cell; the verify record has no floor value anymore. The card lays
+  out its six fields in three columns.
+
 ## [1.3.1] - 2026-11-02
 
 ### Changed

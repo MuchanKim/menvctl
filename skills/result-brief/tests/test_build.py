@@ -304,7 +304,7 @@ class BuilderTests(unittest.TestCase):
         return '<div class="tab-page" data-tab="overview"><header class="hero"><h1>Regression</h1></header>' + inner + RESULT_SECTIONS + '</div><div class="tab-page" data-tab="all"><div id="file-browser"></div></div>'
     def verify_record(self, **values):
         path = Path(self.artifacts.name) / 'verify.json'
-        record = dict(verdict='pass', reason='passed', source='run', tests=485, failures=0, floor=485, sha='a' * 40, tree=b.working_tree_id(), finished_at='2026-11-02T00:00:00+09:00')
+        record = dict(verdict='pass', reason='passed', source='run', tests=485, failures=0, sha='a' * 40, tree=b.working_tree_id(), finished_at='2026-11-02T00:00:00+09:00')
         path.write_text(json.dumps({**record, **values}))
         return str(path)
     def test_changes_without_commit_plan_rejected(self):
@@ -365,6 +365,7 @@ class BuilderTests(unittest.TestCase):
         self.body.write_text(self.overview_body())
         r = self.run_cli(None, '--verify', self.verify_record()); self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('일치', self.out.read_text())
+        self.assertNotIn('<dt>하한</dt>', self.out.read_text())
     def test_stale_verify_record_rejected(self):
         self.write('seed', b'new\n'); record = self.verify_record()
         self.write('seed', b'newer\n')

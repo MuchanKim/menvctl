@@ -264,8 +264,7 @@ table.grid.files td:first-child { font-weight: 500; }
 .verdict.pass { border-left-color: var(--after); }
 .verdict .pill { font-size: 13px; padding: 6px 12px; }
 /* 항목 7개: 4열에서 마지막 칸을 2칸으로 늘려 빈 칸을 없앤다 */
-.verdict .commit-meta { width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.verdict .commit-meta > div:last-child { grid-column: span 2; }
+.verdict .commit-meta { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 720px) { .verdict .commit-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .verdict ul { margin-top: 6px; color: var(--before); }
 .verdict ul code { white-space: normal; overflow-wrap: anywhere; }

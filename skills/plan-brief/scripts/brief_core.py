@@ -524,7 +524,7 @@ def verify_table(record):
     if record is None: return '<p>자동 판정 기록 없음.</p>'
     passed = record['verdict'] == 'pass'
     values = [('사유', record.get('reason', '')), ('테스트', record.get('tests', '')), ('실패', record.get('failures', '')),
-              ('하한', record.get('floor', '')), ('커밋', str(record.get('sha', ''))[:12]),
+              ('커밋', str(record.get('sha', ''))[:12]),
               ('작업 트리', '일치' if record['current'] else '낡음'), ('실행 시각', record.get('finished_at', ''))]
     cells = ''.join(f'<div><dt>{k}</dt><dd>{html.escape(str(v))}</dd></div>' for k, v in values)
     failed = ''.join(f'<li><code>{html.escape(str(x))}</code></li>' for x in record.get('failed_tests', []))
