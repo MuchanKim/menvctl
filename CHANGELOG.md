@@ -6,6 +6,30 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-07
+
+### Changed
+
+- `result-brief`: no longer builds an HTML file. The brief is a Markdown reply
+  in four sections: intent vs. applied changes (including unplanned changes),
+  before/after SVG diagrams embedded as images and checked by the reviewer in
+  the same review call, verification and review results, and a user checklist.
+  The builder, template, browser checker and tests are removed.
+- Workflow: the cross-review runs right after implementation without asking;
+  its findings wait in the brief for the developer instead of being applied.
+  The model that implements a change never reviews it.
+- PR bodies follow the repository template, filled from the result brief,
+  with diagrams in Mermaid.
+- pstack is the implementation skill set; CLAUDE.md suggests installing it
+  when missing.
+
+### Removed
+
+- Skill `plan-brief`. `menvctl update` unlinks it.
+- gstack: the install offer, the missing-gstack warning and the
+  `GSTACK_CODEX_MODEL` setting. Review runs through T3 Code `delegate_task` or
+  `codex exec`.
+
 ## [1.3.2] - 2026-11-02
 
 ### Changed

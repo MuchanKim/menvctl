@@ -19,7 +19,9 @@ Global defaults for Codex work. More specific project instructions take preceden
 ## Skills
 
 - Apply `swift-conventions` for Swift implementation and review; retain project-specific constraints.
-- Codex mainly reviews changes made by Claude Code. Review requests are read-only: report findings by severity and do not modify code.
+- The model that implements a change does not review it. Codex mainly reviews changes made by Claude Code; when Codex implements, request a read-only review from Claude Code (T3 Code `delegate_task`, otherwise `claude -p`).
+- Review requests are read-only: report findings by severity and do not modify code.
+- After implementing and verifying, run the cross-review without asking, do not apply its findings, report with `result-brief`, and wait for the developer.
 
 ## Git and External Changes
 
@@ -28,5 +30,6 @@ Global defaults for Codex work. More specific project instructions take preceden
 - Announce before pushing, creating a PR, or adding a dependency. Explain the need for a third-party dependency and get approval before adding it.
 - Get explicit approval before merging, pushing to the main branch, force-pushing, deleting branches or files, modifying CI/CD, or making system-level changes.
 - Prefer MCP integrations when the relevant integration is available.
+- PR bodies follow the repository's PR template, filled from the result brief. Draw diagrams in Mermaid there; local SVG paths do not render on GitHub.
 - For issues and PRs, verify and apply existing assignees and labels. Ask before creation if the responsible person is unknown.
 - Issue branches: `<type>/<issue-number>-<short-kebab-description>`, with a lowercase kebab-case description and no `#`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`; use `feat`, never `feature`. Example: `feat/185-message-diagnostics`.

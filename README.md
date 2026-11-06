@@ -56,7 +56,7 @@ menvctl links itself to `~/.local/bin/menvctl`, so later runs are just
 |---|---|
 | `menvctl` | Apply the checked-out version with this machine's saved choices |
 | `menvctl --reconfigure` | Ask the setup questions again |
-| `menvctl --yes` | Accept defaults and the plan without asking (skips CLI and gstack installs) |
+| `menvctl --yes` | Accept defaults and the plan without asking (skips CLI installs) |
 | `menvctl update` | Check out the latest release, show its changelog, and apply it |
 | `menvctl check` | Print a notice if a newer release exists (runs from `~/.zshrc`) |
 | `menvctl capture` | Add skills and plugins you installed by hand to `packages.json` |
@@ -177,7 +177,7 @@ the plan puts the previous checkout back.
    published until you run `menvctl release`.
 
    A captured skill's original moves to the backup folder, so the repo copy is
-   the only one. Skills a tool installed (gstack), turned-off plugins, and
+   the only one. Skills a tool installed (a git checkout), turned-off plugins, and
    plugins the Codex app bundles are never offered.
 2. When you add a plugin that writes its own files, list them in its
    `cleanup`. Machines remove the paths recorded when they installed the plugin,
@@ -244,11 +244,12 @@ The rules and settings in this repo set up a split between the two agents:
 
 | Stage | Agent | How |
 |---|---|---|
-| Planning | Claude Code | [gstack](https://github.com/garrytan/gstack) skills such as `/office-hours` and `/plan-eng-review` |
-| Implementation | Claude Code | |
-| Review | Codex | gstack `/codex review`, pinned to `gpt-6-astra` by `GSTACK_CODEX_MODEL` |
+| Planning | Claude Code | Issue or planning document |
+| Implementation | Claude Code | [pstack](https://github.com/cursor/plugins) skills such as `/pstack:poteto-mode` |
+| Review | Codex | Runs right after implementation, read-only; findings wait for the developer |
+| Report | Claude Code | `result-brief`, rendered in the conversation |
 
-menvctl offers to install gstack and warns in the plan when it is missing.
+The model that implements a change never reviews it.
 
 ## Skills
 
@@ -257,18 +258,15 @@ menvctl offers to install gstack and warns in the plan when it is missing.
 | `swift-conventions` | Personal Swift and SwiftUI conventions | ✓ | ✓ |
 | `swiftui-pro`, `swift-concurrency-pro`, `swift-testing-pro` | Customized versions of Paul Hudson's agent skills | ✓ | ✓ |
 | `liquid-glass` | Apple Liquid Glass controls and navigation | ✓ | ✓ |
-| `plan-brief` | HTML planning briefs with requirements, scenarios, acceptance criteria, and open decisions | ✓ | ✓ |
-| `result-brief` | HTML result briefs with actual changes, verification evidence, reviewer focus, and merge conditions | ✓ | ✓ |
+| `result-brief` | Result briefs rendered in the conversation: intent vs. applied changes, reviewer-checked before/after diagrams, verification, and a user checklist | ✓ | ✓ |
 
 Claude Code implements and Codex reviews against the same rules, so these go to
-both. Planning, implementation, and review skills are not tracked here, because
-gstack covers those stages.
+both. Implementation skills come from the pstack plugin, not from this repo.
 
 ## Tests
 
 ```sh
 tests/install-test.sh
-python3 -B -m unittest discover -s skills/result-brief/tests -v
 ```
 
 Publishes v1.0.0, v1.1.0, and a prerelease tag from a copy of the repo into a

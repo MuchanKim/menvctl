@@ -1,7 +1,4 @@
 {
-  "env": {
-    "GSTACK_CODEX_MODEL": "gpt-6-astra"
-  },
   "permissions": {
     "deny": [
       "Bash(git push --force*)",

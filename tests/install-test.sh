@@ -84,7 +84,7 @@ rsync -a --exclude .git "$REPO_ROOT/" "$SRC/"
 awk '/^## \[[0-9]/ { exit } { print }' "$SRC/CHANGELOG.md" >"$SRC/c.tmp" && mv "$SRC/c.tmp" "$SRC/CHANGELOG.md"
 # Test-only shared keys for the v1.1.0 removal cases: one left untouched locally,
 # one whose parent changes type locally.
-jq '. + {"menvctlDropped": "shared", "menvctlNested": {"a": 1}}' "$SRC/claude/settings.shared.json" \
+jq '. + {"env": {"MENVCTL_TEST_ENV": "shared"}, "menvctlDropped": "shared", "menvctlNested": {"a": 1}}' "$SRC/claude/settings.shared.json" \
   >"$SRC/s.tmp" && mv "$SRC/s.tmp" "$SRC/claude/settings.shared.json"
 git -C "$SRC" init -q
 git -C "$SRC" add -A
@@ -126,7 +126,7 @@ done
 [[ "$(jq -r .theme "$SETTINGS")" == light ]] || fail "local key dropped"
 jq -e '.permissions.deny | index("Bash(rm -rf /)")' "$SETTINGS" >/dev/null || fail "local deny dropped"
 jq -e '.permissions.deny | index("Bash(git push origin main)")' "$SETTINGS" >/dev/null || fail "shared deny missing"
-jq -e '.env.GSTACK_CODEX_MODEL' "$SETTINGS" >/dev/null || fail "shared env missing"
+jq -e '.env.MENVCTL_TEST_ENV' "$SETTINGS" >/dev/null || fail "shared env missing"
 grep -qF "menvctl\" check" "$HOME/.zshrc" || fail "update notice not added"
 [[ "$(state .version)" == v1.0.0 ]] || fail "state version"
 [[ "$(readlink "$HOME/.local/bin/menvctl")" == "$INSTALL" ]] || fail "menvctl not linked into ~/.local/bin"
@@ -152,7 +152,7 @@ before="$(snapshot)"
 grep -qE '^  [+-] ' "$WORK_DIR/again.log" && fail "second run planned changes"
 
 # Local edits made before the update: one dropped key changed, one parent changed type.
-jq '.env.GSTACK_CODEX_MODEL = "local-model" | .menvctlNested = "mine"' "$SETTINGS" >"$SETTINGS.tmp" &&
+jq '.env.MENVCTL_TEST_ENV = "local-model" | .menvctlNested = "mine"' "$SETTINGS" >"$SETTINGS.tmp" &&
   mv "$SETTINGS.tmp" "$SETTINGS"
 
 # --- v1.1.0 ---
@@ -210,7 +210,7 @@ ls "$HOME"/.menvctl-backup/*/.claude/ponytail-statusline.sh >/dev/null || fail "
 [[ -e "$HOME/.agents/skills/liquid-glass" || -L "$HOME/.agents/skills/liquid-glass" ]] && fail "dropped codex skill left"
 [[ -L "$HOME/.claude/skills/liquid-glass" ]] && fail "dropped claude skill left"
 jq -e 'has("menvctlDropped")' "$SETTINGS" >/dev/null && fail "dropped settings key left"
-[[ "$(jq -r .env.GSTACK_CODEX_MODEL "$SETTINGS")" == local-model ]] || fail "locally edited dropped key removed"
+[[ "$(jq -r .env.MENVCTL_TEST_ENV "$SETTINGS")" == local-model ]] || fail "locally edited dropped key removed"
 [[ "$(jq -r .menvctlNested "$SETTINGS")" == mine ]] || fail "locally retyped dropped key removed"
 [[ "$(jq -r .theme "$SETTINGS")" == light ]] || fail "local key dropped on update"
 jq -e '.permissions.deny | index("Bash(rm -rf /)")' "$SETTINGS" >/dev/null || fail "local deny dropped on update"
@@ -356,7 +356,7 @@ git clone -q "$WORK_DIR/origin.git" "$AUTHOR"
 mkdir -p "$HOME/.claude/skills/my-skill" "$HOME/.claude/skills/tool-skill"
 printf -- '---\nname: my-skill\n---\n' >"$HOME/.claude/skills/my-skill/SKILL.md"
 printf -- '---\nname: tool-skill\n---\n' >"$HOME/.claude/skills/tool-skill/SKILL.md"
-touch "$HOME/.claude/skills/tool-skill/.gstack-owned"
+mkdir "$HOME/.claude/skills/tool-skill/.git"
 # Codex's own skill directory is not where menvctl links, so capture itself must move it.
 mkdir -p "$HOME/.codex/skills/codex-skill"
 printf -- '---\nname: codex-skill\n---\n' >"$HOME/.codex/skills/codex-skill/SKILL.md"

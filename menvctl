@@ -49,7 +49,7 @@ release        Check menvctl in a throwaway sandbox, then commit, tag the versio
                and publish this checkout to GitHub, and apply it here.
                Writes the "## [X.Y.Z]" CHANGELOG section if it is missing.
                Without X.Y.Z, releases the next minor version (v1.4.2 -> v1.5.0).
---yes          Answer every question with its default. CLI and gstack installs
+--yes          Answer every question with its default. CLI installs
                are skipped because they run remote install scripts; release
                publishes only with --yes or y.
 EOF
@@ -356,8 +356,8 @@ ask_choices() {
   if ask_yn "Show a notice in new shells when an update is released?" y; then DO_NOTICE=1; else DO_NOTICE=0; fi
   choose_skills
   if [[ "$ASSUME_YES" == 1 ]]; then
-    printf 'Skipping CLI and gstack installs in --yes mode.\n'
-  elif ask_yn "Install missing CLIs or gstack? Each one asks first." n; then
+    printf 'Skipping CLI installs in --yes mode.\n'
+  elif ask_yn "Install missing CLIs? Each one asks first." n; then
     DO_TOOLS=1
   fi
 }
@@ -607,8 +607,6 @@ recorded_plugins() {
 # --- external tools ----------------------------------------------------------
 
 install_tools() {
-  local gstack_dir="$HOME/.claude/skills/gstack"
-
   if [[ "$USE_CODEX" == 1 ]] && ! have codex; then
     if ! have npm; then
       printf 'npm not found; install Node.js first to install the codex CLI.\n' >&2
@@ -622,16 +620,6 @@ install_tools() {
   fi
   if ! have claude && ask_yn "Install Claude Code CLI (runs https://claude.ai/install.sh)?" n; then
     curl -fsSL https://claude.ai/install.sh | bash
-  fi
-  if [[ -d "$gstack_dir" ]]; then
-    printf 'Already installed: gstack (update with /gstack-upgrade)\n'
-  elif ask_yn "Install gstack (clones github.com/garrytan/gstack and runs its setup)?" n; then
-    if ! have bun; then
-      printf 'gstack setup needs bun; install it first (brew install oven-sh/bun/bun).\n' >&2
-      return
-    fi
-    git clone --depth 1 https://github.com/garrytan/gstack.git "$gstack_dir"
-    (cd "$gstack_dir" && ./setup --host claude)
   fi
 }
 
@@ -687,8 +675,7 @@ SKILL_DIRS="claude:$HOME/.claude/skills codex:$HOME/.agents/skills codex:$HOME/.
 
 # capture_candidates: tab-separated "kind agent name source" lines for skills and
 # plugins installed here that packages.json does not track. Skipped: links into
-# this repo, skills a tool installed (gstack marks its own; a .git is a tool
-# checkout), turned-off plugins, and plugins the Codex app bundles or installs by default.
+# this repo, skills a tool installed (a .git is a tool checkout), turned-off plugins, and plugins the Codex app bundles or installs by default.
 capture_candidates() {
   local entry agent dir path name target list managed id repo repo_phys
   # Physical paths on both sides: a resolved link reads /private/var where $HOME may say /var.
@@ -702,7 +689,7 @@ capture_candidates() {
       target="$(cd -P -- "$path" 2>/dev/null && pwd || true)"
       [[ -n "$target" && -f "$target/SKILL.md" ]] || continue
       case "$target" in "$repo_phys"/*) continue ;; esac
-      [[ -e "$target/.gstack-owned" || -e "$target/.git" ]] && continue
+      [[ -e "$target/.git" ]] && continue
       grep -qxF "$name" <<<"$managed" && continue
       printf 'skill\t%s\t%s\t%s\t%s\n' "$agent" "$name" "$target" "$path"
     done
@@ -1169,11 +1156,6 @@ apply() {
     printf '  + update notice in ~/.zshrc\n'
   elif [[ "$DO_NOTICE" != 1 ]] && grep -qxF "$NOTICE_LINE" "$ZSHRC" 2>/dev/null; then
     printf '  - update notice in ~/.zshrc\n'
-  fi
-  # CLAUDE.md routes planning to gstack skills and review to its /codex skill.
-  if [[ "$USE_CLAUDE" == 1 && ! -d "$HOME/.claude/skills/gstack" ]]; then
-    printf '  ! gstack is not installed: planning skills and /codex review are unavailable\n'
-    printf '    (run menvctl --reconfigure and choose to install tools)\n'
   fi
 
   if ! ask_yn "Apply this plan?" y; then
