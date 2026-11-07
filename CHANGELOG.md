@@ -6,6 +6,13 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-07
+
+### Changed
+
+- Claude Code: no AI attribution in commits and PRs. Shared settings set
+  `attribution` to empty, and CLAUDE.md states the rule Codex already had.
+
 ## [1.4.0] - 2026-11-07
 
 ### Changed

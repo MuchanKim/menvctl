@@ -19,6 +19,7 @@ More specific project instructions take precedence.
 ## Git
 - Never commit, push, or open a PR without my approval. First show the message, changed files, and verification.
 - Commit bodies have `What` and `Why` sections.
+- No AI or tool attribution in commits, PRs, or branch names: no Co-Authored-By, "Generated with", or claude/, codex/, ai/ prefixes.
 - Branches: `<type>/<issue-number>-<short-kebab-description>`; types: feat, fix, refactor, chore, docs, test.
 - PR bodies follow the repository's PR template, filled from the result brief. Draw diagrams in Mermaid there; local SVG paths do not render on GitHub.
 
