@@ -6,7 +6,8 @@
       "swift-conventions",
       "swift-testing-pro",
       "swiftui-pro",
-      "result-brief"
+      "result-brief",
+      "mac-app-release"
     ],
     "plugins": [
       {
@@ -38,7 +39,8 @@
       "swift-conventions",
       "swift-testing-pro",
       "swiftui-pro",
-      "result-brief"
+      "result-brief",
+      "mac-app-release"
     ],
     "plugins": [
       {

@@ -6,6 +6,16 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-09
+
+### Added
+
+- Skill `mac-app-release` (Claude and Codex): sets up Sparkle auto-updates and
+  tag-triggered GitHub Actions releases for macOS apps outside the App Store,
+  and runs releases. Developer ID signing from a p12, notarization, public or
+  private (token) feeds, version taken from the tag, a local rehearsal that
+  runs the same build script as CI, and release notes from a reviewed draft.
+
 ## [1.4.1] - 2026-11-07
 
 ### Changed
