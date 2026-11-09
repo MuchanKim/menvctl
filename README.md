@@ -258,10 +258,12 @@ The model that implements a change never reviews it.
 | `swift-conventions` | Personal Swift and SwiftUI conventions | ✓ | ✓ |
 | `swiftui-pro`, `swift-concurrency-pro`, `swift-testing-pro` | Customized versions of Paul Hudson's agent skills | ✓ | ✓ |
 | `liquid-glass` | Apple Liquid Glass controls and navigation | ✓ | ✓ |
+| `unslop` | Product-specific UI audit and refinement; invoke `/unslop` | ✓ | |
 | `result-brief` | Result briefs rendered in the conversation: intent vs. applied changes, reviewer-checked before/after diagrams, verification, and a user checklist | ✓ | ✓ |
 
-Claude Code implements and Codex reviews against the same rules, so these go to
-both. Implementation skills come from the pstack plugin, not from this repo.
+Claude Code implements and Codex reviews against the same rules, so the shared
+convention and review skills go to both. `unslop` is assigned to Claude Code only.
+Implementation skills come from the pstack plugin, not from this repo.
 
 ## Tests
 
@@ -281,3 +283,8 @@ temporary origin, then installs, updates, and reconfigures with macOS's bash
 [Swift Concurrency](https://github.com/twostraws/Swift-Concurrency-Agent-Skill),
 and [Swift Testing](https://github.com/twostraws/Swift-Testing-Agent-Skill)
 agent skills, MIT-licensed; see the `LICENSE` file in each skill.
+
+The `unslop` skill is by [Damir Sokolovsky](https://github.com/heydamir/unslop),
+licensed under [CC BY 4.0](skills/unslop/LICENSE). Its optional snapshot feature
+requires Playwright and Chromium; story videos also require ffmpeg. These tools
+are not installed by menvctl.

@@ -108,9 +108,15 @@ step "Simulated v1.0.0: first install"
 
 for skill_dir in "$REPO"/skills/*/; do
   skill_name="$(basename "$skill_dir")"
-  for skills_dir in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
-    [[ "$(readlink "$skills_dir/$skill_name")" == "$REPO/skills/$skill_name" && -d "$skills_dir/$skill_name" ]] ||
-      fail "skill not linked to the repo: $skills_dir/$skill_name"
+  for agent in codex claude; do
+    if [[ "$agent" == codex ]]; then skills_dir="$HOME/.agents/skills"; else skills_dir="$HOME/.claude/skills"; fi
+    if jq -e --arg agent "$agent" --arg skill "$skill_name" '.[$agent].skills | index($skill) != null' "$REPO/packages.json" >/dev/null; then
+      [[ "$(readlink "$skills_dir/$skill_name")" == "$REPO/skills/$skill_name" && -d "$skills_dir/$skill_name" ]] ||
+        fail "skill not linked to the repo: $skills_dir/$skill_name"
+    else
+      [[ ! -e "$skills_dir/$skill_name" && ! -L "$skills_dir/$skill_name" ]] ||
+        fail "unassigned skill installed: $skills_dir/$skill_name"
+    fi
   done
 done
 [[ "$(readlink "$HOME/.codex/AGENTS.md")" == "$REPO/codex/AGENTS.md" ]] || fail "AGENTS.md"

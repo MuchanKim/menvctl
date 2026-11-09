@@ -6,6 +6,27 @@ and releases are `vX.Y.Z` tags.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-09
+
+### Added
+
+- Skill `unslop` (Claude Code only), by Damir Sokolovsky: audits AI-looking
+  interfaces, sets a product-specific design direction, and refines spacing,
+  color, icons, copy, typography, layout, visuals and motion. Vendored from
+  `heydamir/unslop` at `97daa3eb365670ea3f87ed85356cbfcee18105a5`
+  under CC BY 4.0, including references and optional snapshot/story scripts.
+  Playwright, Chromium and ffmpeg are not installed automatically.
+
+### Changed
+
+- Claude Code cross-reviews use Codex `gpt-6-astra` with reasoning effort
+  fixed at `xhigh`, both through T3 Code and the standalone Codex CLI.
+
+### Fixed
+
+- Initial-install sandbox checks follow each agent's skill list and verify
+  that skills assigned only to the other agent are not installed.
+
 ## [1.5.0] - 2026-11-09
 
 ### Added

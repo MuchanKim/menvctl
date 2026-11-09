@@ -32,7 +32,7 @@ More specific project instructions take precedence.
 
 - 구현한 모델은 리뷰하지 않는다. Claude Code가 구현하면 Codex가 리뷰한다.
 - 구현과 리뷰는 한 묶음이다. 검증이 끝나면 묻지 않고 교차 리뷰를 실행한다. 한 줄 수정과 질문은 예외다.
-- 교차 리뷰: T3 Code에서는 `delegate_task`로 Codex에 읽기 전용 리뷰를 맡긴다. T3 Code 밖에서는 `codex exec --sandbox read-only`로 같은 지시를 보낸다. reasoning effort는 기본 `medium`, 결제·인증·동시성·데이터 변경은 `high`.
+- 교차 리뷰: T3 Code에서는 `delegate_task`로 Codex에 읽기 전용 리뷰를 맡긴다. T3 Code 밖에서는 `codex exec --sandbox read-only`로 같은 지시를 보낸다. 모델은 `gpt-6-astra`, reasoning effort는 `xhigh`로 고정한다.
 - 리뷰 지적으로 코드를 고치지 않는다. 브리프에 결정 대기로 올리고 개발자의 피드백을 기다린다.
 - 작업이 끝나면 개발자가 보는 것은 브리프다. 채팅 답변은 결론 한 줄과 결정할 사항만 쓴다.
 

@@ -7,7 +7,8 @@
       "swift-testing-pro",
       "swiftui-pro",
       "result-brief",
-      "mac-app-release"
+      "mac-app-release",
+      "unslop"
     ],
     "plugins": [
       {
